@@ -103,8 +103,8 @@ func TestHealthNeedsNoAuth(t *testing.T) {
         if out["status"] != "ok" {
                 t.Errorf("status = %v, want ok", out["status"])
         }
-        if out["locations"].(float64) != 50 {
-                t.Errorf("locations = %v, want 50", out["locations"])
+        if out["locations"].(float64) != float64(locations.Count()) {
+                t.Errorf("locations = %v, want %d", out["locations"], locations.Count())
         }
 }
 
@@ -171,8 +171,8 @@ func TestLoginThenReadState(t *testing.T) {
         if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
                 t.Fatalf("decode: %v", err)
         }
-        if out.Locations != 50 {
-                t.Errorf("locations = %d, want 50", out.Locations)
+        if out.Locations != locations.Count() {
+                t.Errorf("locations = %d, want %d", out.Locations, locations.Count())
         }
         if out.Settings.ServerAddress != "srv.example.com" {
                 t.Errorf("serverAddress = %q", out.Settings.ServerAddress)
@@ -228,8 +228,8 @@ func TestSubscriptionReturnsFiftyConfigs(t *testing.T) {
                 t.Fatalf("body is not valid base64: %v", err)
         }
         lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-        if len(lines) != 50 {
-                t.Fatalf("subscription carries %d configs, want 50", len(lines))
+        if len(lines) != locations.Count() {
+                t.Fatalf("subscription carries %d configs, want %d", len(lines), locations.Count())
         }
         for i, l := range lines {
                 if !strings.HasPrefix(l, "vless://") {
@@ -266,8 +266,8 @@ func TestSubscriptionFormats(t *testing.T) {
         t.Run("raw", func(t *testing.T) {
                 rec := do(srv, http.MethodGet, "/sub/"+token+"?raw=1", nil, nil)
                 lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
-                if len(lines) != 50 {
-                        t.Fatalf("raw returned %d lines, want 50", len(lines))
+                if len(lines) != locations.Count() {
+                        t.Fatalf("raw returned %d lines, want %d", len(lines), locations.Count())
                 }
         })
 
@@ -277,8 +277,8 @@ func TestSubscriptionFormats(t *testing.T) {
                 if !strings.Contains(body, "proxies:") || !strings.Contains(body, "proxy-groups:") {
                         t.Error("clash output is missing its top-level keys")
                 }
-                if n := strings.Count(body, "type: vless"); n != 50 {
-                        t.Errorf("clash lists %d nodes, want 50", n)
+                if n := strings.Count(body, "type: vless"); n != locations.Count() {
+                        t.Errorf("clash lists %d nodes, want %d", n, locations.Count())
                 }
                 if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "yaml") {
                         t.Errorf("Content-Type = %q, want yaml", ct)
@@ -297,8 +297,8 @@ func TestSubscriptionFormats(t *testing.T) {
                 if !strings.Contains(body, "<!DOCTYPE html>") {
                         t.Error("response is not an HTML document")
                 }
-                if n := strings.Count(body, `class="cfg"`); n != 50 {
-                        t.Errorf("page lists %d configs, want 50", n)
+                if n := strings.Count(body, `class="cfg"`); n != locations.Count() {
+                        t.Errorf("page lists %d configs, want %d", n, locations.Count())
                 }
         })
 }
@@ -324,14 +324,17 @@ func TestSubViewCarriesRealURIsNotTemplatePlaceholder(t *testing.T) {
                 t.Fatal("page contains ZgotmplZ: a config value landed in a URL template context")
         }
         // The copy targets must hold real, complete vless URIs.
-        if n := strings.Count(body, `data-cfg="vless://`); n != 50 {
-                t.Errorf("found %d copyable vless URIs, want 50", n)
+        if n := strings.Count(body, `data-cfg="vless://`); n != locations.Count() {
+                t.Errorf("found %d copyable vless URIs, want %d", n, locations.Count())
         }
         if !strings.Contains(body, u["uuid"].(string)) {
                 t.Error("the page does not contain the user's UUID")
         }
-        // Every country path must be present in a copy target.
-        for _, cc := range []string{"de", "us", "nl", "tn"} {
+        // Every country path must be present in a copy target. Use the
+        // actual location list rather than hardcoding codes, so this test
+        // stays valid as the location table changes.
+        for _, l := range locations.All() {
+                cc := l.Slug()
                 if !strings.Contains(body, "path=%2fws%2f"+cc) && !strings.Contains(body, "path=%2Fws%2F"+cc) {
                         t.Errorf("no copyable config for %s", cc)
                 }
@@ -370,8 +373,8 @@ func TestCleanIPReachesEveryConfigInSubscription(t *testing.T) {
 
         rec := do(srv, http.MethodGet, "/sub/"+u["subToken"].(string)+"?raw=1", nil, nil)
         lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
-        if len(lines) != 50 {
-                t.Fatalf("got %d configs, want 50", len(lines))
+        if len(lines) != locations.Count() {
+                t.Fatalf("got %d configs, want %d", len(lines), locations.Count())
         }
         for i, l := range lines {
                 if !strings.Contains(l, "@104.17.0.1:443") {

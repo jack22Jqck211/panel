@@ -49,6 +49,11 @@ type decoded struct {
                                 Path string `json:"path"`
                         } `json:"wsSettings"`
                 } `json:"streamSettings"`
+                Sniffing struct {
+                        Enabled      bool     `json:"enabled"`
+                        RouteOnly    bool     `json:"routeOnly"`
+                        DestOverride []string `json:"destOverride"`
+                } `json:"sniffing"`
         } `json:"inbounds"`
         Outbounds []struct {
                 Tag      string `json:"tag"`
@@ -58,6 +63,7 @@ type decoded struct {
                                 Address string `json:"address"`
                                 Port    int    `json:"port"`
                         } `json:"servers"`
+                        DomainStrategy string `json:"domainStrategy"`
                 } `json:"settings"`
         } `json:"outbounds"`
         Routing struct {
@@ -100,15 +106,23 @@ func TestXrayConfigIsValidJSON(t *testing.T) {
 
 func TestXrayConfigCounts(t *testing.T) {
         d := mustGenerate(t, testUsers(), testSettings())
-        if len(d.Inbounds) != 50 {
-                t.Errorf("inbounds = %d, want 50", len(d.Inbounds))
+        n := locations.Count()
+        if len(d.Inbounds) != n {
+                t.Errorf("inbounds = %d, want %d", len(d.Inbounds), n)
         }
-        // 50 Tor outbounds plus direct and block.
-        if len(d.Outbounds) != 52 {
-                t.Errorf("outbounds = %d, want 52", len(d.Outbounds))
+        // One socks outbound per non-direct location, plus freedom and block.
+        nonDirect := 0
+        for _, l := range locations.All() {
+                if !l.Direct {
+                        nonDirect++
+                }
         }
-        if len(d.Routing.Rules) != 50 {
-                t.Errorf("routing rules = %d, want 50", len(d.Routing.Rules))
+        wantOutbounds := nonDirect + 2
+        if len(d.Outbounds) != wantOutbounds {
+                t.Errorf("outbounds = %d, want %d", len(d.Outbounds), wantOutbounds)
+        }
+        if len(d.Routing.Rules) != n {
+                t.Errorf("routing rules = %d, want %d", len(d.Routing.Rules), n)
         }
 }
 
@@ -157,6 +171,12 @@ func TestEveryLocationIsWiredEndToEnd(t *testing.T) {
                         t.Errorf("%s: inbound routes to %q, want %q", l.Code, got, outTag)
                 }
 
+                if l.Direct {
+                        // Direct locations route to the shared freedom
+                        // outbound, so no per-location socks outbound
+                        // exists. The routing rule still points at "direct".
+                        continue
+                }
                 if got, ok := socksPortByTag[outTag]; !ok {
                         t.Errorf("%s: no socks outbound tagged %s", l.Code, outTag)
                 } else if got != l.TorPort {
@@ -243,8 +263,8 @@ func TestVMessProtocolSwitch(t *testing.T) {
 
 func TestEmptyUserListStillProducesValidConfig(t *testing.T) {
         d := mustGenerate(t, nil, testSettings())
-        if len(d.Inbounds) != 50 {
-                t.Errorf("inbounds = %d, want 50 even with no users", len(d.Inbounds))
+        if len(d.Inbounds) != locations.Count() {
+                t.Errorf("inbounds = %d, want %d even with no users", len(d.Inbounds), locations.Count())
         }
         for _, in := range d.Inbounds {
                 if len(in.Settings.Clients) != 0 {
@@ -364,8 +384,8 @@ func TestNginxEveryLocationCarriesWebSocketHeaders(t *testing.T) {
                         }
                 }
         }
-        if blocks != 50 {
-                t.Errorf("found %d location blocks, want 50", blocks)
+        if blocks != locations.Count() {
+                t.Errorf("found %d location blocks, want %d", blocks, locations.Count())
         }
 }
 
@@ -438,47 +458,57 @@ func mustGenerateSelfHosted(t *testing.T, us []*store.User, s store.Settings) de
         return d
 }
 
-// The self-hosted config keeps the 50-inbound shape so the panel's per-user
-// subscription model is unchanged. Each inbound routes to its own Tor SOCKS
-// outbound (one Tor instance per country, mirroring the VPS topology).
-func TestSelfHostedHasFiftyInboundsAndTorOutbounds(t *testing.T) {
+// The self-hosted config has one inbound per location and one socks
+// outbound per non-direct location. Direct locations reuse the shared
+// freedom outbound via the routing rule.
+func TestSelfHostedHasOneInboundPerLocationAndTorOutboundsForNonDirect(t *testing.T) {
         d := mustGenerateSelfHosted(t, testUsers(), testSettings())
-        if len(d.Inbounds) != 50 {
-                t.Errorf("inbounds = %d, want 50", len(d.Inbounds))
+        n := locations.Count()
+        if len(d.Inbounds) != n {
+                t.Errorf("inbounds = %d, want %d (one per location)", len(d.Inbounds), n)
         }
-        // 50 socks outbounds (one per location) + freedom + blackhole = 52.
-        if len(d.Outbounds) != 52 {
-                t.Errorf("outbounds = %d, want 52 (50 tor + freedom + blackhole)", len(d.Outbounds))
+        // Count non-direct locations: each gets its own socks outbound.
+        nonDirect := 0
+        for _, l := range locations.All() {
+                if !l.Direct {
+                        nonDirect++
+                }
+        }
+        // nonDirect socks outbounds + freedom + blackhole.
+        wantOutbounds := nonDirect + 2
+        if len(d.Outbounds) != wantOutbounds {
+                t.Errorf("outbounds = %d, want %d (%d tor + freedom + blackhole)",
+                        len(d.Outbounds), wantOutbounds, nonDirect)
         }
         if d.Outbounds[0].Tag != "direct" || d.Outbounds[0].Protocol != "freedom" {
                 t.Errorf("first outbound = %s/%s, want direct/freedom",
                         d.Outbounds[0].Tag, d.Outbounds[0].Protocol)
         }
-        // Count socks outbounds: there must be exactly 50, one per location.
         socksCount := 0
         for _, out := range d.Outbounds {
                 if out.Protocol == "socks" {
                         socksCount++
                 }
         }
-        if socksCount != 50 {
-                t.Errorf("socks outbounds = %d, want 50 (one per location)", socksCount)
+        if socksCount != nonDirect {
+                t.Errorf("socks outbounds = %d, want %d (one per non-direct location)",
+                        socksCount, nonDirect)
         }
 }
 
-// Every routing rule in self-hosted mode must point at the matching Tor
-// outbound for that location's country, mirroring the VPS deployment's
-// topology. An off-by-one here would silently hand users the wrong exit
-// country.
-func TestSelfHostedRoutesGoToMatchingTorOutbound(t *testing.T) {
+// Every routing rule in self-hosted mode must point at the matching
+// outbound for that location's country. For Tor locations this is the
+// per-country socks outbound; for direct locations this is the shared
+// "direct" freedom outbound. An off-by-one here would silently hand
+// users the wrong exit country.
+func TestSelfHostedRoutesGoToMatchingOutbound(t *testing.T) {
         s := testSettings()
         d := mustGenerateSelfHosted(t, testUsers(), s)
 
-        if len(d.Routing.Rules) != 50 {
-                t.Fatalf("routing rules = %d, want 50", len(d.Routing.Rules))
+        if len(d.Routing.Rules) != locations.Count() {
+                t.Fatalf("routing rules = %d, want %d", len(d.Routing.Rules), locations.Count())
         }
 
-        // Build a map of inbound tag -> outbound tag from the rules.
         routeByInbound := map[string]string{}
         for _, r := range d.Routing.Rules {
                 if len(r.InboundTag) != 1 {
@@ -487,7 +517,6 @@ func TestSelfHostedRoutesGoToMatchingTorOutbound(t *testing.T) {
                 routeByInbound[r.InboundTag[0]] = r.OutboundTag
         }
 
-        // Build a map of outbound tag -> SOCKS port from the outbounds.
         socksPortByTag := map[string]int{}
         for _, out := range d.Outbounds {
                 if out.Protocol == "socks" && len(out.Settings.Servers) == 1 {
@@ -495,9 +524,6 @@ func TestSelfHostedRoutesGoToMatchingTorOutbound(t *testing.T) {
                 }
         }
 
-        // For every location, the inbound tag must route to that location's
-        // Tor outbound tag, and that outbound must point at that location's
-        // Tor SOCKS port.
         for _, l := range locations.All() {
                 inTag := l.InboundTag()
                 outTag := l.OutboundTag()
@@ -511,6 +537,16 @@ func TestSelfHostedRoutesGoToMatchingTorOutbound(t *testing.T) {
                         t.Errorf("%s: rule routes to %q, want %q", l.Code, got, outTag)
                         continue
                 }
+
+                if l.Direct {
+                        // Direct locations route to "direct" (freedom). No socks
+                        // outbound should exist for them.
+                        if outTag != "direct" {
+                                t.Errorf("%s: direct location should route to 'direct', got %q", l.Code, outTag)
+                        }
+                        continue
+                }
+
                 port, ok := socksPortByTag[outTag]
                 if !ok {
                         t.Errorf("%s: no socks outbound tagged %s", l.Code, outTag)
@@ -520,6 +556,58 @@ func TestSelfHostedRoutesGoToMatchingTorOutbound(t *testing.T) {
                         t.Errorf("%s: socks port = %d, want %d", l.Code, port, l.TorPort)
                 }
         }
+}
+
+// Sniffing must be enabled on every inbound. This is the single biggest
+// speed win for proxied browsing, so it is worth asserting on.
+func TestSelfHostedSniffingEnabledOnEveryInbound(t *testing.T) {
+        d := mustGenerateSelfHosted(t, testUsers(), testSettings())
+        for _, in := range d.Inbounds {
+                if !in.Sniffing.Enabled {
+                        t.Errorf("%s: sniffing not enabled", in.Tag)
+                }
+                if len(in.Sniffing.DestOverride) < 2 {
+                        t.Errorf("%s: sniffing destOverride too short: %v", in.Tag, in.Sniffing.DestOverride)
+                }
+                // destOverride must include both http and tls.
+                hasHTTP, hasTLS := false, false
+                for _, d := range in.Sniffing.DestOverride {
+                        if d == "http" {
+                                hasHTTP = true
+                        }
+                        if d == "tls" {
+                                hasTLS = true
+                        }
+                }
+                if !hasHTTP || !hasTLS {
+                        t.Errorf("%s: sniffing destOverride must include http and tls, got %v",
+                                in.Tag, in.Sniffing.DestOverride)
+                }
+        }
+}
+
+// The freedom outbound must use domainStrategy=asIs for the fastest
+// possible egress. 'useip' or 'useip4' would force Xray to resolve
+// domains itself, doubling DNS latency.
+func TestSelfHostedFreedomUsesAsIsDNS(t *testing.T) {
+        d := mustGenerateSelfHosted(t, testUsers(), testSettings())
+        for _, out := range d.Outbounds {
+                if out.Tag == "direct" && out.Protocol == "freedom" {
+                        // Settings is interface{}, so we have to re-marshal to read it.
+                        raw, _ := json.Marshal(out.Settings)
+                        var fs struct {
+                                DomainStrategy string `json:"domainStrategy"`
+                        }
+                        if err := json.Unmarshal(raw, &fs); err != nil {
+                                t.Fatalf("unmarshal freedom settings: %v", err)
+                        }
+                        if fs.DomainStrategy != "asIs" {
+                                t.Errorf("freedom domainStrategy = %q, want asIs", fs.DomainStrategy)
+                        }
+                        return
+                }
+        }
+        t.Fatal("no freedom outbound found")
 }
 
 // Inbounds in self-hosted mode still bind loopback only: the panel is the

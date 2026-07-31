@@ -143,6 +143,18 @@ func run() error {
         if err != nil {
                 return err
         }
+        // Wire the Xray PID into the stats endpoint so the dashboard can
+        // show Xray's CPU/RSS alongside the container totals.
+        if xrayMgr != nil {
+                srv = srv.WithXrayPID(xrayMgr.PID)
+        }
+
+        // Start the Xray watchdog. It probes Xray every second and
+        // restarts it if it becomes unresponsive or pegs the CPU. The
+        // watchdog runs for the lifetime of the process.
+        if xrayMgr != nil {
+                go xrayrun.NewWatchdog(xrayMgr).Run(rootCtx, xrayrun.NewStoreConfigSource(st))
+        }
 
         httpServer := &http.Server{
                 Addr:              ":" + port,
@@ -204,20 +216,18 @@ func run() error {
 // The selection is taken from TOR_LOCATIONS, which is either "all" or a
 // comma-separated list of country codes.
 //
-// Memory budget: each Tor instance needs ~30 MB of RSS, so 50 instances
-// is ~1.5 GB. Railway's trial plan gives roughly 1 GB, which means 50 Tor
-// instances will be OOM-killed within a minute of startup (we saw exactly
-// this on the first deploy). The default "popular" set below is 8
-// locations (~240 MB), which fits comfortably in trial RAM. Set
-// TOR_LOCATIONS=all to start every location on a higher-tier plan.
+// Memory budget: each Tor instance needs ~30 MB of RSS, so 7 instances
+// is ~210 MB. The default selection ("DE,US,TR,GB,FR,JP,AE") covers the
+// 7 Tor-pinned locations; NL is NOT in this list because it exits
+// directly through the container's own IP (the locations table marks
+// it Direct=true).
 func startTor(ctx context.Context) (*torrun.Manager, error) {
         binPath := envOr("TOR_BIN", "/usr/bin/tor")
         baseDir := envOr("TOR_BASE_DIR", "/tmp/tor-ml")
         geoipDir := envOr("TOR_GEOIP_DIR", "/usr/share/tor")
-        // Default to a curated subset that fits trial-plan RAM. These 8
-        // countries cover the most common use cases and the most populous
-        // Tor relay pools, so they bootstrap fastest.
-        selection := envOr("TOR_LOCATIONS", "DE,US,NL,FR,GB,CA,JP,SG")
+        // Default to the 7 Tor-pinned locations. NL exits directly via
+        // freedom, not Tor, so it is intentionally absent here.
+        selection := envOr("TOR_LOCATIONS", "DE,US,TR,GB,FR,JP,AE")
 
         mgr := torrun.New(binPath, baseDir, geoipDir)
         log.Printf("tor: starting (bin=%s, base=%s, selection=%s)", binPath, baseDir, selection)

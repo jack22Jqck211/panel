@@ -6,55 +6,180 @@
 <meta name="robots" content="noindex, nofollow">
 <title>{{.Name}} · {{.Count}} کانفیگ</title>
 <link rel="stylesheet" href="/assets/style.css">
+<style>
+  /* Sub page uses a lighter, more compact layout than the admin panel. */
+  body { background: var(--bg); padding: 0; }
+  .sub-wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+
+  .sub-hero {
+    background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 22px 18px;
+    margin-bottom: 18px;
+  }
+  .sub-hero h1 {
+    margin: 0 0 6px;
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .sub-hero .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  .sub-hero .meta-row span { display: inline-flex; align-items: center; gap: 5px; }
+  .sub-hero .meta-row .dot-sep { color: var(--border); }
+
+  .sub-link {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .sub-link input {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+  }
+  .sub-link input:focus { outline: none; border-color: var(--accent); }
+  .sub-link button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .sub-link button:hover { background: var(--accent-hover); }
+
+  .sub-formats {
+    display: flex;
+    gap: 14px;
+    margin-top: 12px;
+    font-size: 12px;
+  }
+  .sub-formats a { color: var(--muted); }
+  .sub-formats a:hover { color: var(--accent); }
+
+  .cfg-section { margin-top: 18px; }
+  .cfg-section h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .cfg-section h2 button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .cfg-section h2 button:hover { color: var(--text); border-color: var(--accent); }
+
+  .cfg-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .cfg {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .cfg:hover {
+    border-color: var(--accent);
+    background: var(--surface-2);
+  }
+  .cfg .flag { font-size: 18px; line-height: 1; }
+  .cfg .who { display: flex; flex-direction: column; min-width: 0; }
+  .cfg .cc { font-size: 13px; font-weight: 600; color: var(--text); }
+  .cfg .cn { font-size: 11px; color: var(--muted); }
+  .cfg .uri {
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: ltr;
+    text-align: left;
+  }
+  .cfg .copy-hint {
+    font-size: 11px;
+    color: var(--muted);
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .cfg:hover .copy-hint { opacity: 1; }
+
+  .warnbox { margin-bottom: 18px; }
+</style>
 </head>
 <body>
 
-<header class="topbar">
-  <div class="brand">
-    <span class="dot"></span>
-    <span>ساب اختصاصی · {{.Name}}</span>
-  </div>
-  <div class="meta">{{.Count}} لوکیشن</div>
-</header>
+<div class="sub-wrap">
 
-<main>
   {{if not .ServerConfigured}}
   <div class="warnbox">
     ⚠️ مدیر پنل هنوز آدرس سرور را تنظیم نکرده است، پس این کانفیگ‌ها فعلاً کار نمی‌کنند.
   </div>
   {{end}}
 
-  <div class="card">
-    <div class="sub-head">
-      <h1>لینک اشتراک</h1>
-      <div class="meta">
-        حجم: {{.Quota}} · انقضا: {{.Expiry}} · پروتکل: {{.Protocol}}
-      </div>
+  <div class="sub-hero">
+    <h1>ساب اختصاصی · {{.Name}}</h1>
+    <div class="meta-row">
+      <span>📍 {{.Count}} لوکیشن</span>
+      <span class="dot-sep">·</span>
+      <span>📊 حجم: {{.Quota}}</span>
+      <span class="dot-sep">·</span>
+      <span>⏳ انقضا: {{.Expiry}}</span>
+      <span class="dot-sep">·</span>
+      <span>🔐 {{.Protocol}}</span>
     </div>
-    <p class="hint">
-      این آدرس را در V2rayNG یا v2rayN یا NekoBox به‌عنوان Subscription اضافه کنید.
-      هر {{.IntervalHours}} ساعت یک‌بار خودش بروزرسانی می‌شود.
-    </p>
-    <div class="sub-cell" style="margin-bottom:14px">
-      <input type="text" readonly id="subLink" value="{{.SubURL}}" style="min-width:0;flex:1">
-      <button class="ghost sm" data-copy-el="subLink">کپی</button>
+    <div class="sub-link">
+      <input type="text" readonly id="subLink" value="{{.SubURL}}">
+      <button data-copy-el="subLink">کپی لینک</button>
     </div>
-    <div class="actions" style="margin-top:0">
-      <a href="{{.SubURL}}?b64=1" class="mono meta">نسخه base64</a>
-      <a href="{{.SubURL}}?raw=1" class="mono meta">لیست خام</a>
-      <a href="{{.SubURL}}?format=clash" class="mono meta">Clash / Mihomo</a>
+    <div class="sub-formats">
+      <a href="{{.SubURL}}?b64=1">base64</a>
+      <a href="{{.SubURL}}?raw=1">لیست خام</a>
+      <a href="{{.SubURL}}?format=clash">Clash / Mihomo</a>
     </div>
   </div>
 
-  <div class="card">
-    <div class="sub-head">
-      <h2 style="font-size:16px">کانفیگ‌ها</h2>
-      <button class="ghost sm" id="copyAll">کپی همه</button>
-    </div>
-    <p class="hint">
-      همه‌ی کانفیگ‌ها یک UUID و یک سرور دارند و فقط لوکیشن خروجی‌شان تفاوت می‌کند.
-      برای کپی یک مورد، روی خطش کلیک کنید.
-    </p>
+  <div class="cfg-section">
+    <h2>
+      <span>کانفیگ‌ها</span>
+      <button id="copyAll">کپی همه</button>
+    </h2>
     <div class="cfg-list">
       {{range .Configs}}
       <div class="cfg" data-cfg="{{.URI}}" title="برای کپی کلیک کنید">
@@ -64,18 +189,13 @@
           <span class="cn">{{.Country}}</span>
         </span>
         <span class="uri">{{.URI}}</span>
+        <span class="copy-hint">کپی</span>
       </div>
       {{end}}
     </div>
   </div>
-</main>
 
-<footer class="foot">
-  <p>
-    ترافیک این کانفیگ‌ها از شبکه‌ی Tor رد می‌شود، پس تأخیر بالا و سرعت پایین است و برای
-    ویدیو مناسب نیست. این لینک را با کسی به اشتراک نگذارید.
-  </p>
-</footer>
+</div>
 
 <script>
 const flash = (el, text) => {
@@ -107,8 +227,8 @@ document.addEventListener('click', async (e) => {
   if (row) {
     try {
       await navigator.clipboard.writeText(row.getAttribute('data-cfg'));
-      const cc = row.querySelector('.cc');
-      flash(cc, 'کپی شد');
+      const hint = row.querySelector('.copy-hint');
+      if (hint) flash(hint, '✓');
     } catch {}
   }
 });

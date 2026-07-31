@@ -153,12 +153,17 @@ func bootstrapWindowFromEnv() time.Duration {
 }
 
 // Stop terminates every running Tor instance. Safe to call multiple times.
+//
+// Stop is non-blocking: it cancels each process's context (which
+// SIGKILLs the child) and returns immediately. The background goroutine
+// started in startOne reaps each process. We do NOT call cmd.Wait()
+// here because that would race with the goroutine -- Wait is not safe
+// to call concurrently with itself.
 func (m *Manager) Stop() {
         m.mu.Lock()
         defer m.mu.Unlock()
-        for code, cancel := range m.cancels {
+        for _, cancel := range m.cancels {
                 cancel()
-                _ = m.running[code].Wait()
         }
         m.running = make(map[string]*exec.Cmd)
         m.cancels = make(map[string]context.CancelFunc)

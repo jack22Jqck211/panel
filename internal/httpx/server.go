@@ -27,6 +27,7 @@ import (
         "github.com/jack22Jqck211/panel/internal/locations"
         "github.com/jack22Jqck211/panel/internal/probe"
         "github.com/jack22Jqck211/panel/internal/proxyuri"
+        "github.com/jack22Jqck211/panel/internal/stats"
         "github.com/jack22Jqck211/panel/internal/store"
         "github.com/jack22Jqck211/panel/internal/sub"
         "github.com/jack22Jqck211/panel/internal/users"
@@ -66,6 +67,19 @@ type Server struct {
         assetFS  http.Handler
         indexRaw []byte
         loginRaw []byte
+
+        // xrayPID returns the current Xray PID, or 0 if Xray is not running.
+        // Set by main.go when self-hosted mode is on; nil otherwise (the
+        // /api/stats handler then reports XrayPID=0).
+        xrayPID func() int
+}
+
+// WithXrayPID returns a copy of srv that reports the given Xray PID
+// source in /api/stats. Used by main.go to wire the xrayrun manager
+// into the stats endpoint without creating a circular import.
+func (s *Server) WithXrayPID(fn func() int) *Server {
+        s.xrayPID = fn
+        return s
 }
 
 // New builds the server and parses embedded templates.
@@ -137,6 +151,7 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/generate/xray", s.requireAuth(s.handleGenXray))
         s.mux.HandleFunc("GET /api/generate/nginx", s.requireAuth(s.handleGenNginx))
         s.mux.HandleFunc("GET /api/diagnose", s.requireAuth(s.handleDiagnose))
+        s.mux.HandleFunc("GET /api/stats", s.requireAuth(s.handleStats))
 
         // Consumed by deploy/agent.sh on the VPS.
         s.mux.HandleFunc("GET /api/sync", s.handleSync)
@@ -828,4 +843,19 @@ func (s *Server) renderSubHTML(w http.ResponseWriter, r *http.Request, u *store.
         if err := s.subTmpl.ExecuteTemplate(w, "sub.html", v); err != nil {
                 log.Printf("render sub view: %v", err)
         }
+}
+
+// handleStats returns the container's real RAM and CPU usage, plus
+// per-process stats for Xray and the Tor instances. Used by the admin
+// dashboard's resource widget.
+//
+// The snapshot is computed on every request -- it is cheap (a handful
+// of /proc reads) and avoids the staleness of a cached value.
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	xrayPID := 0
+	if s.xrayPID != nil {
+		xrayPID = s.xrayPID()
+	}
+	snap := stats.DetailedSnapshot(xrayPID)
+	writeJSON(w, http.StatusOK, snap)
 }

@@ -83,12 +83,15 @@ COPY --from=build /panel /panel
 # a separate VPS.
 #
 # TOR_LOCATIONS controls which Tor instances are started.
-#   - "DE,US,NL,FR,GB,CA,JP,SG" (default): a curated subset of 8 popular
-#     locations. Each Tor instance uses ~30 MB RAM, so 8 instances need
-#     ~240 MB -- fits comfortably in Railway's trial plan (~1 GB RAM).
-#   - "all": starts all 50 locations, needs ~1.5 GB RAM. Use this on
-#     Railway's Developer or higher plans.
-#   - "DE,US,NL,...": any comma-separated list of country codes.
+#   - "DE,US,TR,GB,FR,JP,AE" (default): the 7 Tor-pinned locations. NL
+#     is NOT in this list because it exits directly through the
+#     container's own IP (the Location table marks it Direct=true).
+#     Each Tor instance uses ~30 MB RAM, so 7 instances need ~210 MB --
+#     fits comfortably in Railway's trial plan (~1 GB RAM).
+#   - "all": starts a Tor instance for every non-direct location.
+#   - "DE,US,NL,...": any comma-separated list of country codes. Note
+#     that listing NL here has no effect -- NL is Direct and does not
+#     use Tor.
 #
 # PORT defaults to 8080 -- Railway injects its own PORT env at runtime, which
 # overrides this default via the envOr() helper in main.go.
@@ -100,7 +103,7 @@ ENV PORT=8080 \
     TOR_BIN=/usr/bin/tor \
     TOR_BASE_DIR=/tmp/tor-ml \
     TOR_GEOIP_DIR=/usr/share/tor \
-    TOR_LOCATIONS=DE,US,NL,FR,GB,CA,JP,SG
+    TOR_LOCATIONS=DE,US,TR,GB,FR,JP,AE
 
 # /data is where the panel persists its JSON state. Mount a Railway volume
 # here to keep users across redeploys. XRAY_CONF lives under /data so the

@@ -40,6 +40,40 @@
     آدرس سرور باید دامنه یا آی‌پی همان VPSی باشد که nginx و Xray و Tor-ML رویش نصب است.
   </div>
 
+  <!-- ============ resource stats ============ -->
+  <section class="card" id="statsCard">
+    <h2>منابع کانتینر</h2>
+    <p class="hint">مصرف رم و CPUی واقعی کانتینر Railway، به‌صورت زنده.</p>
+    <div class="stats-grid">
+      <div class="stat-block">
+        <div class="stat-label">RAM</div>
+        <div class="stat-value" id="statMem">—</div>
+        <div class="stat-bar"><div class="stat-bar-fill" id="statMemBar"></div></div>
+        <div class="stat-sub" id="statMemSub">—</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">CPU</div>
+        <div class="stat-value" id="statCPU">—</div>
+        <div class="stat-bar"><div class="stat-bar-fill" id="statCPUBar"></div></div>
+        <div class="stat-sub" id="statCPUSub">—</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Xray</div>
+        <div class="stat-value" id="statXray">—</div>
+        <div class="stat-sub" id="statXraySub">PID: —</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Tor</div>
+        <div class="stat-value" id="statTor">—</div>
+        <div class="stat-sub" id="statTorSub">— instance</div>
+      </div>
+    </div>
+    <div class="stat-footer">
+      <span class="meta" id="statUptime">آپتایم: —</span>
+      <span class="meta" id="statGoroutines">گوروتین: —</span>
+    </div>
+  </section>
+
   <!-- ============ settings ============ -->
   <section class="card">
     <h2>تنظیمات سرور</h2>

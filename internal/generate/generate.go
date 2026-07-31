@@ -47,6 +47,17 @@ type xrayWSSettings struct {
         Path string `json:"path"`
 }
 
+// xraySniffing enables protocol sniffing on the inbound. Sniffing lets
+// Xray detect the real destination host from the TLS SNI or HTTP Host
+// header, which improves routing decisions and lets DNS-resolved
+// connections reuse a single TCP stream. The 'tls' and 'http' sniffers
+// cover the vast majority of client traffic.
+type xraySniffing struct {
+        DestOverride []string `json:"destOverride"`
+        Enabled      bool     `json:"enabled"`
+        RouteOnly    bool     `json:"routeOnly"`
+}
+
 type xrayStreamSettings struct {
         Network    string          `json:"network"`
         Security   string          `json:"security"`
@@ -60,6 +71,7 @@ type xrayInbound struct {
         Protocol       string              `json:"protocol"`
         Settings       xrayInboundSettings `json:"settings"`
         StreamSettings xrayStreamSettings  `json:"streamSettings"`
+        Sniffing       xraySniffing        `json:"sniffing"`
 }
 
 type xraySocksServer struct {
@@ -69,6 +81,14 @@ type xraySocksServer struct {
 
 type xraySocksSettings struct {
         Servers []xraySocksServer `json:"servers"`
+}
+
+// xrayFreedomSettings tunes the freedom outbound. 'asIs' is the fastest
+// DNS strategy: it does not resolve domains at the Xray layer, letting
+// the OS resolver handle them. 'useip' would force Xray to resolve and
+// could double-DNS every connection.
+type xrayFreedomSettings struct {
+        DomainStrategy string `json:"domainStrategy"`
 }
 
 type xrayOutbound struct {
@@ -145,7 +165,13 @@ func XrayConfig(activeUsers []*store.User, s store.Settings) ([]byte, error) {
         // The first outbound is Xray's default. Keeping freedom first means a
         // request that somehow matches no rule still resolves rather than hanging.
         cfg.Outbounds = append(cfg.Outbounds, xrayOutbound{Tag: "direct", Protocol: "freedom"})
+        // One socks outbound per non-direct location, pointing at that
+        // country's Tor SOCKS port. Direct locations reuse the freedom
+        // outbound via the routing rule (OutboundTag returns "direct").
         for _, l := range locs {
+                if l.Direct {
+                        continue
+                }
                 cfg.Outbounds = append(cfg.Outbounds, xrayOutbound{
                         Tag:      l.OutboundTag(),
                         Protocol: "socks",
@@ -173,21 +199,20 @@ func XrayConfig(activeUsers []*store.User, s store.Settings) ([]byte, error) {
 
 // XraySelfHostedConfig renders an Xray config for self-hosted mode.
 //
-// In self-hosted mode the panel container runs Xray AND Tor itself: each
-// of the 50 inbounds routes to its own Tor SOCKS outbound (one Tor
-// instance per country, pinned via ExitNodes). This is the same topology
-// the VPS deployment uses, just colocated in one container.
+// Each location routes to either:
+//   - a Tor SOCKS outbound (when l.Direct is false), pinned to that
+//     country via ExitNodes, OR
+//   - the shared freedom outbound (when l.Direct is true), which exits
+//     through the container's own IP.
 //
-// All 50 inbounds are emitted (so the panel's "one UUID -> 50 configs"
-// contract is unchanged), and each routes to its dedicated Tor SOCKS
-// outbound on 127.0.0.1:<48180+n>. A freedom outbound is kept as the
-// first outbound so Xray's "first matching outbound" default does not
-// accidentally leak traffic if a rule is misconfigured.
+// All inbounds have sniffing enabled (tls + http) so Xray can detect the
+// real destination and avoid double-DNS, and the freedom outbound uses
+// domainStrategy=asIs for the same reason. These two together are the
+// biggest speed wins for proxied browsing.
 //
-// Memory note: 50 Tor instances need ~1-1.5 GB of RAM. Set TOR_LOCATIONS
-// to a subset (e.g. "DE,US,NL,FR") to start only some of them; the
-// inbounds for unstarted locations still exist but their Tor SOCKS port
-// will refuse connections.
+// The freedom outbound is always emitted (even if no location is Direct)
+// so Xray's "first matching outbound" default does not accidentally leak
+// traffic if a rule is misconfigured.
 func XraySelfHostedConfig(activeUsers []*store.User, s store.Settings) ([]byte, error) {
         proto := proxyuri.ParseProtocol(s.Protocol)
 
@@ -214,6 +239,16 @@ func XraySelfHostedConfig(activeUsers []*store.User, s store.Settings) ([]byte, 
                 settings.Decryption = "none"
         }
 
+        // Shared sniffing config: enables TLS SNI + HTTP Host sniffing on every
+        // inbound. This is the single biggest speed win for proxied browsing
+        // because it lets Xray route by real destination domain instead of by
+        // resolved IP.
+        sniff := xraySniffing{
+                Enabled:      true,
+                RouteOnly:    true,
+                DestOverride: []string{"http", "tls"},
+        }
+
         for _, l := range locs {
                 cfg.Inbounds = append(cfg.Inbounds, xrayInbound{
                         Tag:      l.InboundTag(),
@@ -226,16 +261,25 @@ func XraySelfHostedConfig(activeUsers []*store.User, s store.Settings) ([]byte, 
                                 Security:   "none",
                                 WSSettings: &xrayWSSettings{Path: l.Path(s.PathPrefix)},
                         },
+                        Sniffing: sniff,
                 })
         }
 
-        // First outbound is the Xray default. Keeping freedom first means a
-        // request that matches no rule still resolves rather than hanging.
-        cfg.Outbounds = append(cfg.Outbounds, xrayOutbound{Tag: "direct", Protocol: "freedom"})
+        // Freedom outbound with asIs DNS strategy: the fastest possible egress.
+        // Xray hands the connection to the OS, which resolves and dials directly.
+        cfg.Outbounds = append(cfg.Outbounds, xrayOutbound{
+                Tag:      "direct",
+                Protocol: "freedom",
+                Settings: xrayFreedomSettings{DomainStrategy: "asIs"},
+        })
 
-        // One socks outbound per location, pointing at that country's Tor
-        // SOCKS port. The tag matches what the routing rules reference.
+        // One socks outbound per non-direct location, pointing at that
+        // country's Tor SOCKS port. Direct locations reuse the freedom outbound
+        // via the routing rule, so no per-location outbound is emitted for them.
         for _, l := range locs {
+                if l.Direct {
+                        continue
+                }
                 cfg.Outbounds = append(cfg.Outbounds, xrayOutbound{
                         Tag:      l.OutboundTag(),
                         Protocol: "socks",
@@ -246,6 +290,8 @@ func XraySelfHostedConfig(activeUsers []*store.User, s store.Settings) ([]byte, 
         }
         cfg.Outbounds = append(cfg.Outbounds, xrayOutbound{Tag: "block", Protocol: "blackhole"})
 
+        // Each inbound routes to its outbound. Direct locations route to
+        // "direct" (freedom); Tor locations route to "tor-<cc>".
         for _, l := range locs {
                 cfg.Routing.Rules = append(cfg.Routing.Rules, xrayRule{
                         Type:        "field",

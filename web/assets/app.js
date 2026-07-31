@@ -300,3 +300,69 @@ $('logout').addEventListener('click', async () => {
 });
 
 load();
+
+// ---------- stats widget ----------
+
+function fmtBytes(n) {
+  if (!n || n <= 0) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = n, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v < 10 && i > 0 ? 1 : 0) + ' ' + u[i];
+}
+
+function fmtDuration(sec) {
+  if (!sec) return '—';
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d} روز ${h} ساعت`;
+  if (h > 0) return `${h} ساعت ${m} دقیقه`;
+  return `${m} دقیقه`;
+}
+
+function setBar(el, percent) {
+  if (!el) return;
+  el.style.width = Math.min(100, percent) + '%';
+  el.classList.remove('warn', 'crit');
+  if (percent >= 90) el.classList.add('crit');
+  else if (percent >= 75) el.classList.add('warn');
+}
+
+async function loadStats() {
+  try {
+    const s = await api('/api/stats');
+    // RAM
+    $('statMem').textContent = fmtBytes(s.memUsedBytes) + ' / ' + fmtBytes(s.memLimitBytes);
+    setBar($('statMemBar'), s.memPercent);
+    $('statMemSub').textContent = s.memPercent.toFixed(1) + '% استفاده';
+
+    // CPU
+    $('statCPU').textContent = s.cpuPercent.toFixed(1) + '%';
+    setBar($('statCPUBar'), s.cpuPercent);
+    $('statCPUSub').textContent = 'پنل + Xray + Tor';
+
+    // Xray
+    if (s.xrayPid > 0) {
+      $('statXray').textContent = fmtBytes(s.xrayRssBytes);
+      $('statXraySub').textContent = `PID: ${s.xrayPid} · CPU: ${s.xrayCpuPercent.toFixed(1)}%`;
+    } else {
+      $('statXray').textContent = 'غیرفعال';
+      $('statXraySub').textContent = 'PID: —';
+    }
+
+    // Tor
+    $('statTor').textContent = s.torCount + ' instance';
+    $('statTorSub').textContent = fmtBytes(s.torRssBytes) + ' RAM';
+
+    // Footer
+    $('statUptime').textContent = 'آپتایم: ' + fmtDuration(s.uptimeSeconds);
+    $('statGoroutines').textContent = 'گوروتین: ' + s.goroutines;
+  } catch (e) {
+    // Silent fail: the stats widget is non-critical.
+  }
+}
+
+// Refresh stats every 3 seconds.
+loadStats();
+setInterval(loadStats, 3000);

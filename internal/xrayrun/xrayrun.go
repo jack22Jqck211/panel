@@ -166,6 +166,31 @@ func (m *Manager) runLocked(ctx context.Context) error {
         return nil
 }
 
+// PID returns the PID of the currently-running Xray process, or 0 if
+// Xray is not running. Used by the watchdog to detect restarts.
+func (m *Manager) PID() int {
+        m.mu.Lock()
+        defer m.mu.Unlock()
+        if m.cmd == nil || m.cmd.Process == nil {
+                return 0
+        }
+        return m.cmd.Process.Pid
+}
+
+// killCurrent stops the current Xray process without starting a new one.
+// Used by the watchdog as a last-resort restart when the config cannot
+// be regenerated: the sync loop will pick up the dead process on its
+// next tick and restart it.
+func (m *Manager) killCurrent() {
+        m.mu.Lock()
+        defer m.mu.Unlock()
+        if m.cancel != nil {
+                m.cancel()
+                m.cancel = nil
+        }
+        m.cmd = nil
+}
+
 // SyncLoop polls the store for changes and reloads Xray when the revision
 // changes. It blocks until ctx is cancelled.
 //
@@ -204,4 +229,23 @@ func (m *Manager) SyncLoop(ctx context.Context, st *store.Store, interval time.D
                         log.Printf("xray reloaded (rev %s, %d users)", rev, len(st.ActiveUsers()))
                 }
         }
+}
+
+// StoreConfigSource adapts a *store.Store to the ConfigSource interface
+// used by the watchdog. It regenerates the Xray config from the current
+// store state on demand.
+type StoreConfigSource struct {
+        st *store.Store
+}
+
+// NewStoreConfigSource creates a ConfigSource backed by the given store.
+func NewStoreConfigSource(st *store.Store) *StoreConfigSource {
+        return &StoreConfigSource{st: st}
+}
+
+// CurrentConfig regenerates the self-hosted Xray config from the store's
+// current state. Used by the watchdog to restart Xray with the latest
+// config (including any users added since the last reload).
+func (s *StoreConfigSource) CurrentConfig() ([]byte, error) {
+        return generate.XraySelfHostedConfig(s.st.ActiveUsers(), s.st.Settings())
 }

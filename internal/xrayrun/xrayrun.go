@@ -62,18 +62,23 @@ func (m *Manager) Start(ctx context.Context, initialConfig []byte) error {
 // The new config is validated with `xray -test` before it touches the live
 // process, so a malformed config (or a panel state that produces one) cannot
 // take the proxy down: the previous Xray keeps running.
+//
+// The temp file is given a .json suffix because Xray determines the config
+// format from the file extension: a file ending in .tmp is rejected with
+// "Failed to get format". Passing -format json explicitly is belt-and-
+// suspenders in case a future Xray build drops extension sniffing.
 func (m *Manager) Reload(ctx context.Context, newConfig []byte) error {
         m.mu.Lock()
         defer m.mu.Unlock()
 
-        tmp := m.confPath + ".tmp"
+        tmp := m.confPath + ".candidate.json"
         if err := os.WriteFile(tmp, newConfig, 0o644); err != nil {
                 return fmt.Errorf("write temp config: %w", err)
         }
 
         test, tCancel := context.WithTimeout(ctx, 5*time.Second)
         defer tCancel()
-        probe := exec.CommandContext(test, m.binPath, "-test", "-c", tmp)
+        probe := exec.CommandContext(test, m.binPath, "-test", "-format", "json", "-c", tmp)
         out, err := probe.CombinedOutput()
         if err != nil {
                 os.Remove(tmp)
@@ -123,9 +128,14 @@ func (m *Manager) run(ctx context.Context) error {
 
 // runLocked starts the Xray process with the current config. Caller must hold
 // the lock.
+//
+// -format json is passed explicitly because Xray sniffs the format from the
+// config file extension; if the conf path ever loses its .json suffix the
+// implicit sniffing would silently break, while the explicit flag keeps
+// working regardless.
 func (m *Manager) runLocked(ctx context.Context) error {
         cctx, cancel := context.WithCancel(ctx)
-        cmd := exec.CommandContext(cctx, m.binPath, "run", "-c", m.confPath)
+        cmd := exec.CommandContext(cctx, m.binPath, "run", "-format", "json", "-c", m.confPath)
         // Surface Xray's stdout/stderr in the container's log stream so the
         // panel's logs and the proxy's logs are interleaved in one place.
         cmd.Stdout = os.Stdout

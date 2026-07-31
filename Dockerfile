@@ -60,12 +60,14 @@ FROM alpine:3.20
 # ca-certificates is required so the panel can dial HTTPS endpoints (the
 # /api/diagnose probe, the sync agent on a VPS, etc.).
 # tzdata is small and lets the panel log local times in addition to UTC.
-# tor + tor-geoipdb: the panel runs one Tor instance per country (50 in
-# total), each pinned to its country via ExitNodes. tor-geoipdb provides
-# the geoip files Tor needs to map country codes to IP ranges; without it,
-# ExitNodes {cc} silently falls back to "any exit" and every location
-# would egress through the same country (the bug we are fixing).
-RUN apk add --no-cache ca-certificates tzdata tor tor-geoipdb
+# tor: the panel runs one Tor instance per country (50 in total), each
+# pinned to its country via ExitNodes. The alpine 'tor' package bundles
+# the geoip files (/usr/share/tor/geoip, geoip6) that Tor needs to map
+# country codes to IP ranges; without them, ExitNodes {cc} silently
+# falls back to "any exit" and every location would egress through the
+# same country (the bug we are fixing). Note: there is no separate
+# 'tor-geoipdb' package in alpine -- the files ship with 'tor' itself.
+RUN apk add --no-cache ca-certificates tzdata tor
 
 # Xray binary from stage 2, panel binary from stage 1.
 COPY --from=xray /out/xray /usr/local/bin/xray

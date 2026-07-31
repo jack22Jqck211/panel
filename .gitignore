@@ -1,0 +1,17 @@
+# local state
+data/
+*.log
+
+# build output
+/panel
+panel
+
+# secrets
+.env
+.env.local
+
+# editors
+.idea/
+.vscode/
+*.swp
+.DS_Store

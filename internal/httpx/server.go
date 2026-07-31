@@ -561,7 +561,17 @@ func (s *Server) handleUserConfigs(w http.ResponseWriter, r *http.Request) {
 // ---------- handlers: server config generation ----------
 
 func (s *Server) handleGenXray(w http.ResponseWriter, r *http.Request) {
-        raw, err := generate.XrayConfig(s.st.ActiveUsers(), s.st.Settings())
+        // In self-hosted mode, the actual config Xray runs is the self-hosted
+        // variant (with Tor socks outbounds + DNS routing + sniffing). In VPS
+        // mode, it is the classic config (with Tor socks outbounds but no
+        // sniffing, since nginx handles TLS termination).
+        var raw []byte
+        var err error
+        if s.cfg.SelfHosted {
+                raw, err = generate.XraySelfHostedConfig(s.st.ActiveUsers(), s.st.Settings())
+        } else {
+                raw, err = generate.XrayConfig(s.st.ActiveUsers(), s.st.Settings())
+        }
         if err != nil {
                 writeErr(w, http.StatusInternalServerError, err.Error())
                 return
@@ -852,10 +862,10 @@ func (s *Server) renderSubHTML(w http.ResponseWriter, r *http.Request, u *store.
 // The snapshot is computed on every request -- it is cheap (a handful
 // of /proc reads) and avoids the staleness of a cached value.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
-	xrayPID := 0
-	if s.xrayPID != nil {
-		xrayPID = s.xrayPID()
-	}
-	snap := stats.DetailedSnapshot(xrayPID)
-	writeJSON(w, http.StatusOK, snap)
+        xrayPID := 0
+        if s.xrayPID != nil {
+                xrayPID = s.xrayPID()
+        }
+        snap := stats.DetailedSnapshot(xrayPID)
+        writeJSON(w, http.StatusOK, snap)
 }

@@ -1,0 +1,8 @@
+.git
+.gitignore
+data
+*.md
+!README.md
+deploy
+scripts
+.env

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{.Name}} · {{.Count}} کانفیگ</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <span>ساب اختصاصی · {{.Name}}</span>
+  </div>
+  <div class="meta">{{.Count}} لوکیشن</div>
+</header>
+
+<main>
+  {{if not .ServerConfigured}}
+  <div class="warnbox">
+    ⚠️ مدیر پنل هنوز آدرس سرور را تنظیم نکرده است، پس این کانفیگ‌ها فعلاً کار نمی‌کنند.
+  </div>
+  {{end}}
+
+  <div class="card">
+    <div class="sub-head">
+      <h1>لینک اشتراک</h1>
+      <div class="meta">
+        حجم: {{.Quota}} · انقضا: {{.Expiry}} · پروتکل: {{.Protocol}}
+      </div>
+    </div>
+    <p class="hint">
+      این آدرس را در V2rayNG یا v2rayN یا NekoBox به‌عنوان Subscription اضافه کنید.
+      هر {{.IntervalHours}} ساعت یک‌بار خودش بروزرسانی می‌شود.
+    </p>
+    <div class="sub-cell" style="margin-bottom:14px">
+      <input type="text" readonly id="subLink" value="{{.SubURL}}" style="min-width:0;flex:1">
+      <button class="ghost sm" data-copy-el="subLink">کپی</button>
+    </div>
+    <div class="actions" style="margin-top:0">
+      <a href="{{.SubURL}}?b64=1" class="mono meta">نسخه base64</a>
+      <a href="{{.SubURL}}?raw=1" class="mono meta">لیست خام</a>
+      <a href="{{.SubURL}}?format=clash" class="mono meta">Clash / Mihomo</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="sub-head">
+      <h2 style="font-size:16px">کانفیگ‌ها</h2>
+      <button class="ghost sm" id="copyAll">کپی همه</button>
+    </div>
+    <p class="hint">
+      همه‌ی کانفیگ‌ها یک UUID و یک سرور دارند و فقط لوکیشن خروجی‌شان تفاوت می‌کند.
+      برای کپی یک مورد، روی خطش کلیک کنید.
+    </p>
+    <div class="cfg-list">
+      {{range .Configs}}
+      <div class="cfg" data-uri="{{.URI}}" title="برای کپی کلیک کنید">
+        <span class="flag">{{.Flag}}</span>
+        <span class="who">
+          <span class="cc">{{.Code}}</span>
+          <span class="cn">{{.Country}}</span>
+        </span>
+        <span class="uri">{{.URI}}</span>
+      </div>
+      {{end}}
+    </div>
+  </div>
+</main>
+
+<footer class="foot">
+  <p>
+    ترافیک این کانفیگ‌ها از شبکه‌ی Tor رد می‌شود، پس تأخیر بالا و سرعت پایین است و برای
+    ویدیو مناسب نیست. این لینک را با کسی به اشتراک نگذارید.
+  </p>
+</footer>
+
+<script>
+const flash = (el, text) => {
+  const old = el.textContent;
+  el.textContent = text;
+  setTimeout(() => { el.textContent = old; }, 1400);
+};
+
+document.addEventListener('click', async (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLElement)) return;
+
+  const elId = t.getAttribute('data-copy-el');
+  if (elId) {
+    const src = document.getElementById(elId);
+    try { await navigator.clipboard.writeText(src.value); flash(t, 'کپی شد'); }
+    catch { src.select(); }
+    return;
+  }
+
+  if (t.id === 'copyAll') {
+    const all = [...document.querySelectorAll('.cfg')].map((c) => c.getAttribute('data-uri')).join('\n');
+    try { await navigator.clipboard.writeText(all); flash(t, 'همه کپی شد'); }
+    catch { flash(t, 'کپی نشد'); }
+    return;
+  }
+
+  const row = t.closest('.cfg');
+  if (row) {
+    try {
+      await navigator.clipboard.writeText(row.getAttribute('data-uri'));
+      const cc = row.querySelector('.cc');
+      flash(cc, 'کپی شد');
+    } catch {}
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>پنل مدیریت Xray · Multi-Location</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <span>پنل Xray · <span id="locCount">50</span> لوکیشن Tor</span>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <span class="meta" id="revLabel"></span>
+    <button class="ghost sm" id="logout">خروج</button>
+  </div>
+</header>
+
+<main>
+  <div id="msg" class="notice"></div>
+  <div id="noAddr" class="warnbox" style="display:none">
+    ⚠️ آدرس سرور تنظیم نشده است. تا وقتی آدرس دامنه یا آی‌پی سرورِ Xray را وارد نکنید،
+    کانفیگ‌های تولیدشده آدرس درستی ندارند.
+  </div>
+
+  <!-- ============ settings ============ -->
+  <section class="card">
+    <h2>تنظیمات سرور</h2>
+    <p class="hint">
+      این مقادیر روی همه‌ی کانفیگ‌های همه‌ی کاربران اعمال می‌شود. آدرس سرور باید همان
+      ماشینی باشد که Tor-ML و Xray رویش نصب است.
+    </p>
+    <form id="settingsForm">
+      <div class="grid">
+        <div>
+          <label for="serverAddress">آدرس سرور (دامنه یا آی‌پی)</label>
+          <input id="serverAddress" type="text" placeholder="srv.example.com">
+        </div>
+        <div>
+          <label for="serverPort">پورت</label>
+          <input id="serverPort" type="number" min="1" max="65535" placeholder="443">
+        </div>
+        <div>
+          <label for="pathPrefix">پیشوند مسیر</label>
+          <input id="pathPrefix" type="text" placeholder="/ws">
+        </div>
+        <div>
+          <label for="protocol">پروتکل</label>
+          <select id="protocol">
+            <option value="vless">VLESS</option>
+            <option value="vmess">VMess</option>
+          </select>
+        </div>
+        <div>
+          <label for="defaultCleanIp">آی‌پی تمیز پیش‌فرض (اختیاری)</label>
+          <input id="defaultCleanIp" type="text" placeholder="مثلاً 104.17.0.1">
+        </div>
+        <div>
+          <label for="subIntervalHours">فاصله بروزرسانی ساب (ساعت)</label>
+          <input id="subIntervalHours" type="number" min="1" max="168" placeholder="12">
+        </div>
+        <div class="check">
+          <input id="tls" type="checkbox">
+          <label for="tls">TLS فعال باشد</label>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="submit">ذخیره تنظیمات</button>
+        <button type="button" class="ghost" id="dlXray">دانلود کانفیگ Xray</button>
+        <button type="button" class="ghost" id="dlNginx">دانلود کانفیگ nginx</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ============ add user ============ -->
+  <section class="card">
+    <h2>ساخت کاربر جدید</h2>
+    <p class="hint">
+      هر کاربر یک UUID می‌گیرد و یک لینک ساب اختصاصی که داخلش
+      <strong id="locCount2">50</strong> کانفیگ با ۵۰ لوکیشن مختلف است.
+    </p>
+    <form id="addForm">
+      <div class="grid">
+        <div>
+          <label for="name">نام کاربر</label>
+          <input id="name" type="text" placeholder="ali" required>
+        </div>
+        <div>
+          <label for="cleanIp">آی‌پی تمیز (روی همه ۵۰ کانفیگ اعمال می‌شود)</label>
+          <input id="cleanIp" type="text" placeholder="اختیاری — مثلاً 104.17.0.1">
+        </div>
+        <div>
+          <label for="expiresInDays">انقضا (روز، ۰ = بی‌نهایت)</label>
+          <input id="expiresInDays" type="number" min="0" placeholder="0">
+        </div>
+        <div>
+          <label for="quotaGb">حجم (گیگابایت، ۰ = بی‌نهایت)</label>
+          <input id="quotaGb" type="number" min="0" step="1" placeholder="0">
+        </div>
+        <div>
+          <label for="note">یادداشت</label>
+          <input id="note" type="text" placeholder="اختیاری">
+        </div>
+      </div>
+      <div class="actions">
+        <button type="submit">ساخت کاربر</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ============ users ============ -->
+  <section class="card">
+    <h2>کاربران</h2>
+    <p class="hint">لینک ساب هم در V2rayNG کار می‌کند و هم در مرورگر قابل دیدن است.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>نام</th>
+            <th>وضعیت</th>
+            <th>آی‌پی تمیز</th>
+            <th>حجم</th>
+            <th>انقضا</th>
+            <th>لینک ساب</th>
+            <th>عملیات</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div id="emptyState" class="empty" style="display:none">هنوز کاربری ساخته نشده است.</div>
+  </section>
+</main>
+
+<footer class="foot">
+  <p>
+    کانفیگ‌ها به سرورِ Xray شما اشاره می‌کنند، نه به این پنل. بعد از ساخت یا حذف کاربر،
+    کانفیگ Xray سرور باید بروزرسانی شود — اگر <code class="mono">agent.sh</code> را روی سرور
+    نصب کرده باشید این کار خودکار انجام می‌شود.
+  </p>
+</footer>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

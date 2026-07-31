@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>ورود · پنل Xray</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-box">
+    <div class="card">
+      <h1>پنل مدیریت Xray</h1>
+      <p class="hint">Multi-Location Config Panel</p>
+      <div id="err" class="notice err"></div>
+      <form id="f" autocomplete="off">
+        <label for="pw">رمز مدیریت</label>
+        <input id="pw" type="password" placeholder="••••••••" autofocus required>
+        <button type="submit" id="btn">ورود</button>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+const f = document.getElementById('f');
+const err = document.getElementById('err');
+const btn = document.getElementById('btn');
+
+f.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  err.classList.remove('show');
+  btn.disabled = true;
+  btn.textContent = 'در حال ورود…';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: document.getElementById('pw').value }),
+    });
+    if (res.ok) {
+      location.href = '/';
+      return;
+    }
+    const body = await res.json().catch(() => ({}));
+    err.textContent = body.error || 'رمز اشتباه است.';
+    err.classList.add('show');
+  } catch (e) {
+    err.textContent = 'خطای شبکه: ' + e.message;
+    err.classList.add('show');
+  }
+  btn.disabled = false;
+  btn.textContent = 'ورود';
+});
+</script>
+</body>
+</html>

@@ -201,15 +201,23 @@ func run() error {
 // startTor launches the Tor instances (one per country) and returns once
 // their SOCKS ports are listening or the bootstrap window expires.
 //
-// The selection is taken from TOR_LOCATIONS, which is either "all" (the
-// default) or a comma-separated list of country codes. Starting a subset is
-// useful when the container is RAM-constrained: 50 Tor instances need
-// roughly 1-1.5 GB.
+// The selection is taken from TOR_LOCATIONS, which is either "all" or a
+// comma-separated list of country codes.
+//
+// Memory budget: each Tor instance needs ~30 MB of RSS, so 50 instances
+// is ~1.5 GB. Railway's trial plan gives roughly 1 GB, which means 50 Tor
+// instances will be OOM-killed within a minute of startup (we saw exactly
+// this on the first deploy). The default "popular" set below is 8
+// locations (~240 MB), which fits comfortably in trial RAM. Set
+// TOR_LOCATIONS=all to start every location on a higher-tier plan.
 func startTor(ctx context.Context) (*torrun.Manager, error) {
         binPath := envOr("TOR_BIN", "/usr/bin/tor")
         baseDir := envOr("TOR_BASE_DIR", "/tmp/tor-ml")
         geoipDir := envOr("TOR_GEOIP_DIR", "/usr/share/tor")
-        selection := envOr("TOR_LOCATIONS", "all")
+        // Default to a curated subset that fits trial-plan RAM. These 8
+        // countries cover the most common use cases and the most populous
+        // Tor relay pools, so they bootstrap fastest.
+        selection := envOr("TOR_LOCATIONS", "DE,US,NL,FR,GB,CA,JP,SG")
 
         mgr := torrun.New(binPath, baseDir, geoipDir)
         log.Printf("tor: starting (bin=%s, base=%s, selection=%s)", binPath, baseDir, selection)

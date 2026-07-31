@@ -240,12 +240,22 @@ func XraySelfHostedConfig(activeUsers []*store.User, s store.Settings) ([]byte, 
         }
 
         // Shared sniffing config: enables TLS SNI + HTTP Host sniffing on every
-        // inbound. This is the single biggest speed win for proxied browsing
-        // because it lets Xray route by real destination domain instead of by
-        // resolved IP.
+        // inbound. RouteOnly is false (the default) so Xray OVERRIDES the
+        // destination with the sniffed domain.
+        //
+        // This is critical for Tor exits: if the client resolved the domain
+        // locally (e.g. got a US IP for google.com) and we passed the IP
+        // through to Tor, the Tor exit in Germany would connect to a US IP --
+        // slow and often blocked. By overriding the destination with the
+        // sniffed SNI, Tor resolves the domain through its own network and
+        // gets an IP near the exit country.
+        //
+        // Telegram works either way (it uses hardcoded IPs / DoH), but
+        // browsers need this override to resolve domains correctly through
+        // the Tor exit.
         sniff := xraySniffing{
                 Enabled:      true,
-                RouteOnly:    true,
+                RouteOnly:    false,
                 DestOverride: []string{"http", "tls"},
         }
 

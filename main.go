@@ -216,18 +216,18 @@ func run() error {
 // The selection is taken from TOR_LOCATIONS, which is either "all" or a
 // comma-separated list of country codes.
 //
-// Memory budget: each Tor instance needs ~30 MB of RSS, so 7 instances
-// is ~210 MB. The default selection ("DE,US,TR,GB,FR,JP,AE") covers the
-// 7 Tor-pinned locations; NL is NOT in this list because it exits
+// Memory budget: each Tor instance needs ~110 MB of RSS, so 5 instances
+// is ~550 MB. The default selection ("DE,US,TR,FR,AE") covers the
+// 5 Tor-pinned locations; NL is NOT in this list because it exits
 // directly through the container's own IP (the locations table marks
 // it Direct=true).
 func startTor(ctx context.Context) (*torrun.Manager, error) {
         binPath := envOr("TOR_BIN", "/usr/bin/tor")
         baseDir := envOr("TOR_BASE_DIR", "/tmp/tor-ml")
         geoipDir := envOr("TOR_GEOIP_DIR", "/usr/share/tor")
-        // Default to the 7 Tor-pinned locations. NL exits directly via
+        // Default to the 5 Tor-pinned locations. NL exits directly via
         // freedom, not Tor, so it is intentionally absent here.
-        selection := envOr("TOR_LOCATIONS", "DE,US,TR,GB,FR,JP,AE")
+        selection := envOr("TOR_LOCATIONS", "DE,US,TR,FR,AE")
 
         mgr := torrun.New(binPath, baseDir, geoipDir)
         log.Printf("tor: starting (bin=%s, base=%s, selection=%s)", binPath, baseDir, selection)

@@ -802,9 +802,9 @@ func TestMatchLocationPort(t *testing.T) {
         if err := st.SetSettings(s); err != nil {
                 t.Fatalf("set settings: %v", err)
         }
-        r = httptest.NewRequest(http.MethodGet, "/tunel/jp", nil)
+        r = httptest.NewRequest(http.MethodGet, "/tunel/tr", nil)
         if _, ok := srv.matchLocationPort(r); !ok {
-                t.Errorf("/tunel/jp: expected a match")
+                t.Errorf("/tunel/tr: expected a match")
         }
 
         // Unknown country code.

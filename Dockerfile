@@ -1,9 +1,15 @@
-# Two-stage build producing a single static binary on an empty base image.
+# Three-stage build:
 #
-# The panel has no external Go dependencies and the UI is compiled in via
-# go:embed, so the runtime image needs nothing but the binary itself. That keeps
-# the deployed image in single-digit megabytes and removes the entire OS package
-# surface from the attack surface.
+#   1. golang:1.23-alpine    compiles the panel binary
+#   2. alpine                 downloads and unpacks the Xray release, then
+#                            strips it to the binary we actually need
+#   3. alpine                 the runtime image: panel binary + xray binary +
+#                            ca-certificates (for outbound TLS) + nobody user
+#
+# The runtime image is intentionally alpine rather than scratch because we
+# now run Xray as a subprocess and need a working /tmp, /proc and a non-root
+# user. The image is still small: alpine + the two binaries + ca-certificates
+# is well under 50 MB.
 
 FROM golang:1.23-alpine AS build
 
@@ -28,16 +34,67 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       -ldflags="-s -w" \
       -o /panel .
 
-FROM scratch
+# ----- stage 2: fetch Xray --------------------------------------------------
+#
+# We download a pinned Xray release and unpack just the binary. Pinning is
+# deliberate: a future Xray release could change config syntax and silently
+# break deploys, so we upgrade explicitly.
+FROM alpine:3.20 AS xray
 
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ARG XRAY_VERSION=1.8.24
+
+# curl/unzip are pulled just for this stage and do not reach the runtime.
+RUN apk add --no-cache curl unzip
+
+WORKDIR /tmp
+RUN curl -fsSL -o xray.zip \
+      "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" \
+      && echo "Pinned Xray release v${XRAY_VERSION}" \
+      && unzip -o xray.zip xray -d /out \
+      && rm xray.zip \
+      && /out/xray version
+
+# ----- stage 3: runtime -----------------------------------------------------
+FROM alpine:3.20
+
+# ca-certificates is required so the panel can dial HTTPS endpoints (the
+# /api/diagnose probe, the sync agent on a VPS, etc.).
+# tzdata is small and lets the panel log local times in addition to UTC.
+RUN apk add --no-cache ca-certificates tzdata
+
+# Xray binary from stage 2, panel binary from stage 1.
+COPY --from=xray /out/xray /usr/local/bin/xray
 COPY --from=build /panel /panel
 
 # DATA_DIR should point at a mounted volume in production. Container
 # filesystems are wiped on redeploy, so without a volume every user is lost
 # when the service rebuilds.
+#
+# SELF_HOSTED_PROXY defaults to true: the panel runs an in-process Xray and
+# serves WebSocket traffic on the same port as the panel UI. Set to "false"
+# to use the original architecture where the panel only generates config for
+# a separate VPS.
+#
+# PORT defaults to 8080 -- Railway injects its own PORT env at runtime, which
+# overrides this default via the envOr() helper in main.go.
 ENV PORT=8080 \
-    DATA_DIR=/data
+    DATA_DIR=/data \
+    SELF_HOSTED_PROXY=true \
+    XRAY_BIN=/usr/local/bin/xray \
+    XRAY_CONF=/tmp/xray-config.json
+
+# /data is where the panel persists its JSON state. Mount a Railway volume
+# here to keep users across redeploys.
+RUN mkdir -p /data /tmp && \
+    chown -R nobody:nobody /data /tmp
+
+# Run as nobody. The panel binds a high port (8080) and Xray binds loopback
+# ports only, so root is not needed.
+USER nobody
+
+# /data is a volume: state survives container restarts only when a volume is
+# mounted here. Without one, state is ephemeral (which is fine for testing).
+VOLUME ["/data"]
 
 EXPOSE 8080
 

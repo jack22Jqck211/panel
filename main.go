@@ -1,143 +1,238 @@
 // Command panel serves the Xray multi-location config panel.
 //
-// It manages users, renders each user's 50 per-location configs as a
-// subscription, and generates the nginx + Xray configuration the proxy server
-// needs. It never carries proxy traffic itself.
+// In its original form the panel is a control surface only: it manages users,
+// renders subscriptions, and generates the Xray/nginx config that a separate
+// VPS pulls and applies. That mode is still available -- set
+// SELF_HOSTED_PROXY=false to disable the in-process proxy.
+//
+// In self-hosted mode (the default for the Railway Docker image) the panel
+// also runs Xray inside the container and serves VLESS/VMess WebSocket
+// traffic directly, so the panel's public URL is the connect address clients
+// dial. Tor-ML is intentionally not bundled -- 50 Tor daemons are too heavy
+// for a PaaS container -- so all 50 configs exit through the container's own
+// IP. Use the VPS flow with deploy/install.sh if you need true per-country
+// exits.
 package main
 
 import (
-	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"errors"
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"syscall"
-	"time"
+        "context"
+        "crypto/rand"
+        "encoding/hex"
+        "errors"
+        "fmt"
+        "log"
+        "net/http"
+        "os"
+        "os/signal"
+        "path/filepath"
+        "strconv"
+        "strings"
+        "syscall"
+        "time"
 
-	"github.com/jack22Jqck211/panel/internal/httpx"
-	"github.com/jack22Jqck211/panel/internal/locations"
-	"github.com/jack22Jqck211/panel/internal/store"
+        "github.com/jack22Jqck211/panel/internal/generate"
+        "github.com/jack22Jqck211/panel/internal/httpx"
+        "github.com/jack22Jqck211/panel/internal/locations"
+        "github.com/jack22Jqck211/panel/internal/store"
+        "github.com/jack22Jqck211/panel/internal/xrayrun"
 )
 
 func main() {
-	log.SetFlags(log.LstdFlags | log.LUTC)
-	// Go's log package defaults to stderr, which hosting platforms surface as
-	// error-level output. These are ordinary informational lines, so send them
-	// to stdout and keep the platform's log view honest.
-	log.SetOutput(os.Stdout)
+        log.SetFlags(log.LstdFlags | log.LUTC)
+        // Go's log package defaults to stderr, which hosting platforms surface as
+        // error-level output. These are ordinary informational lines, so send them
+        // to stdout and keep the platform's log view honest.
+        log.SetOutput(os.Stdout)
 
-	if err := run(); err != nil {
-		log.Fatalf("fatal: %v", err)
-	}
+        if err := run(); err != nil {
+                log.Fatalf("fatal: %v", err)
+        }
 }
 
 func run() error {
-	port := envOr("PORT", "8080")
-	if _, err := strconv.Atoi(port); err != nil {
-		return fmt.Errorf("PORT must be a number, got %q", port)
-	}
+        port := envOr("PORT", "8080")
+        if _, err := strconv.Atoi(port); err != nil {
+                return fmt.Errorf("PORT must be a number, got %q", port)
+        }
 
-	dataDir := resolveDataDir(os.Getenv("DATA_DIR"))
-	st, err := store.Open(dataDir)
-	if err != nil {
-		return err
-	}
+        dataDir := resolveDataDir(os.Getenv("DATA_DIR"))
+        st, err := store.Open(dataDir)
+        if err != nil {
+                return err
+        }
 
-	adminPassword := os.Getenv("ADMIN_PASSWORD")
-	if adminPassword == "" {
-		adminPassword, err = randomHex(9)
-		if err != nil {
-			return err
-		}
-		log.Printf("┌──────────────────────────────────────────────────────────")
-		log.Printf("│ ADMIN_PASSWORD was not set. Generated a temporary one:")
-		log.Printf("│")
-		log.Printf("│     %s", adminPassword)
-		log.Printf("│")
-		log.Printf("│ It changes on every restart. Set ADMIN_PASSWORD to keep it.")
-		log.Printf("└──────────────────────────────────────────────────────────")
-	}
+        adminPassword := os.Getenv("ADMIN_PASSWORD")
+        if adminPassword == "" {
+                adminPassword, err = randomHex(9)
+                if err != nil {
+                        return err
+                }
+                log.Printf("┌──────────────────────────────────────────────────────────")
+                log.Printf("│ ADMIN_PASSWORD was not set. Generated a temporary one:")
+                log.Printf("│")
+                log.Printf("│     %s", adminPassword)
+                log.Printf("│")
+                log.Printf("│ It changes on every restart. Set ADMIN_PASSWORD to keep it.")
+                log.Printf("└──────────────────────────────────────────────────────────")
+        }
 
-	// A stable session secret keeps logins alive across restarts. Without one we
-	// still work, but every restart signs users out.
-	sessionSecret := []byte(os.Getenv("SESSION_SECRET"))
-	if len(sessionSecret) == 0 {
-		generated, err := randomHex(32)
-		if err != nil {
-			return err
-		}
-		sessionSecret = []byte(generated)
-		log.Printf("SESSION_SECRET not set: sessions will not survive a restart")
-	}
+        // A stable session secret keeps logins alive across restarts. Without one we
+        // still work, but every restart signs users out.
+        sessionSecret := []byte(os.Getenv("SESSION_SECRET"))
+        if len(sessionSecret) == 0 {
+                generated, err := randomHex(32)
+                if err != nil {
+                        return err
+                }
+                sessionSecret = []byte(generated)
+                log.Printf("SESSION_SECRET not set: sessions will not survive a restart")
+        }
 
-	syncKey := os.Getenv("SYNC_KEY")
-	if syncKey == "" {
-		log.Printf("SYNC_KEY not set: /api/sync is disabled until you set it")
-	}
+        syncKey := os.Getenv("SYNC_KEY")
+        if syncKey == "" {
+                log.Printf("SYNC_KEY not set: /api/sync is disabled until you set it")
+        }
 
-	srv, err := httpx.New(st, httpx.Config{
-		AdminPassword: adminPassword,
-		SessionSecret: sessionSecret,
-		SyncKey:       syncKey,
-	})
-	if err != nil {
-		return err
-	}
+        // Self-hosted mode is on by default. It can be disabled for deployments
+        // that pair this panel with a separate VPS (the original architecture).
+        selfHosted := envBool("SELF_HOSTED_PROXY", true)
 
-	httpServer := &http.Server{
-		Addr:              ":" + port,
-		Handler:           srv,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
+        // Root context tied to the process lifetime. Anything we start here
+        // (Xray, the sync loop) listens on this and stops on SIGTERM.
+        rootCtx, rootCancel := context.WithCancel(context.Background())
+        defer rootCancel()
 
-	log.Printf("xray-tor-multiloc-panel starting")
-	log.Printf("  locations : %d", locations.Count())
-	log.Printf("  data file : %s", st.Path())
-	log.Printf("  listening : :%s", port)
+        var xrayMgr *xrayrun.Manager
+        if selfHosted {
+                xrayMgr, err = startSelfHostedProxy(rootCtx, st)
+                if err != nil {
+                        // Do not fail the whole process: the panel is still
+                        // useful for managing configs even if the in-process
+                        // Xray could not start. The sync loop will keep
+                        // retrying.
+                        log.Printf("warning: self-hosted proxy did not start: %v", err)
+                        log.Printf("         the panel will continue to run, but configs will not connect through this container.")
+                        xrayMgr = nil
+                }
+        } else {
+                log.Printf("SELF_HOSTED_PROXY=false: panel runs in control-only mode.")
+                log.Printf("  Configs will point at the externally-configured server address;")
+                log.Printf("  a separate VPS running nginx + Xray + Tor-ML is required.")
+        }
 
-	// Serve until a termination signal arrives, then drain in flight requests.
-	errCh := make(chan error, 1)
-	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-			return
-		}
-		errCh <- nil
-	}()
+        srv, err := httpx.New(st, httpx.Config{
+                AdminPassword: adminPassword,
+                SessionSecret: sessionSecret,
+                SyncKey:       syncKey,
+                SelfHosted:    selfHosted,
+        })
+        if err != nil {
+                return err
+        }
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+        httpServer := &http.Server{
+                Addr:              ":" + port,
+                Handler:           srv,
+                ReadHeaderTimeout: 10 * time.Second,
+                ReadTimeout:       30 * time.Second,
+                WriteTimeout:      60 * time.Second,
+                IdleTimeout:       120 * time.Second,
+        }
 
-	select {
-	case err := <-errCh:
-		return err
-	case sig := <-stop:
-		log.Printf("received %s, shutting down", sig)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := httpServer.Shutdown(ctx); err != nil {
-			return fmt.Errorf("shutdown: %w", err)
-		}
-		return nil
-	}
+        log.Printf("xray-tor-multiloc-panel starting")
+        log.Printf("  locations  : %d", locations.Count())
+        log.Printf("  data file  : %s", st.Path())
+        log.Printf("  self-hosted: %v", selfHosted)
+        log.Printf("  listening  : :%s", port)
+
+        // Serve until a termination signal arrives, then drain in flight requests.
+        errCh := make(chan error, 1)
+        go func() {
+                if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+                        errCh <- err
+                        return
+                }
+                errCh <- nil
+        }()
+
+        stop := make(chan os.Signal, 1)
+        signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+        select {
+        case err := <-errCh:
+                if xrayMgr != nil {
+                        xrayMgr.Stop()
+                }
+                return err
+        case sig := <-stop:
+                log.Printf("received %s, shutting down", sig)
+                if xrayMgr != nil {
+                        xrayMgr.Stop()
+                }
+                ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+                defer cancel()
+                if err := httpServer.Shutdown(ctx); err != nil {
+                        return fmt.Errorf("shutdown: %w", err)
+                }
+                return nil
+        }
+}
+
+// startSelfHostedProxy launches the in-process Xray binary, writes the
+// initial config, and kicks off a polling loop that reloads Xray whenever
+// the panel's state changes (users added/removed, settings updated).
+//
+// The returned Manager is owned by the caller, which must call Stop on
+// shutdown. The sync loop is bound to ctx and stops when ctx is cancelled.
+func startSelfHostedProxy(ctx context.Context, st *store.Store) (*xrayrun.Manager, error) {
+        binPath := envOr("XRAY_BIN", "/usr/local/bin/xray")
+        confPath := envOr("XRAY_CONF", "/tmp/xray-config.json")
+
+        mgr := xrayrun.New(binPath, confPath)
+
+        initial, err := generate.XraySelfHostedConfig(st.ActiveUsers(), st.Settings())
+        if err != nil {
+                return nil, fmt.Errorf("generate initial xray config: %w", err)
+        }
+        if err := mgr.Start(ctx, initial); err != nil {
+                return nil, fmt.Errorf("start xray: %w", err)
+        }
+
+        log.Printf("self-hosted proxy: xray started (%d inbounds, freedom outbound)",
+                locations.Count())
+        log.Printf("  bin  : %s", binPath)
+        log.Printf("  conf : %s", confPath)
+
+        // Reload loop: poll the store for changes and reload Xray when the
+        // revision changes. The loop exits when ctx is cancelled.
+        go mgr.SyncLoop(ctx, st, 3*time.Second)
+
+        return mgr, nil
+}
+
+// envBool reads a boolean environment variable. The default is returned when
+// the variable is unset or empty. The accepted truthy values are 1, t, true,
+// yes, on (case-insensitive); everything else is false.
+func envBool(key string, def bool) bool {
+        v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+        if v == "" {
+                return def
+        }
+        switch v {
+        case "1", "t", "true", "yes", "on":
+                return true
+        case "0", "f", "false", "no", "off":
+                return false
+        }
+        return def
 }
 
 // envOr reads an environment variable with a fallback.
 func envOr(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
+        if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+                return v
+        }
+        return fallback
 }
 
 // resolveDataDir picks where to persist state.
@@ -147,40 +242,40 @@ func envOr(key, fallback string) string {
 // conventional /data mount before falling back to a local directory, and say
 // plainly which one we landed on.
 func resolveDataDir(configured string) string {
-	if v := strings.TrimSpace(configured); v != "" {
-		return v
-	}
-	if writable("/data") {
-		log.Printf("DATA_DIR not set: using the mounted volume at /data")
-		return "/data"
-	}
-	local := filepath.Join(".", "data")
-	log.Printf("DATA_DIR not set and /data is unavailable: using %s", local)
-	log.Printf("WARNING: this directory is ephemeral. Mount a volume and set DATA_DIR to keep users across redeploys.")
-	return local
+        if v := strings.TrimSpace(configured); v != "" {
+                return v
+        }
+        if writable("/data") {
+                log.Printf("DATA_DIR not set: using the mounted volume at /data")
+                return "/data"
+        }
+        local := filepath.Join(".", "data")
+        log.Printf("DATA_DIR not set and /data is unavailable: using %s", local)
+        log.Printf("WARNING: this directory is ephemeral. Mount a volume and set DATA_DIR to keep users across redeploys.")
+        return local
 }
 
 // writable reports whether dir exists and accepts writes.
 func writable(dir string) bool {
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return false
-	}
-	probe := filepath.Join(dir, ".write-probe")
-	f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return false
-	}
-	f.Close()
-	os.Remove(probe)
-	return true
+        info, err := os.Stat(dir)
+        if err != nil || !info.IsDir() {
+                return false
+        }
+        probe := filepath.Join(dir, ".write-probe")
+        f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o644)
+        if err != nil {
+                return false
+        }
+        f.Close()
+        os.Remove(probe)
+        return true
 }
 
 // randomHex returns n random bytes hex encoded.
 func randomHex(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("read random bytes: %w", err)
-	}
-	return hex.EncodeToString(b), nil
+        b := make([]byte, n)
+        if _, err := rand.Read(b); err != nil {
+                return "", fmt.Errorf("read random bytes: %w", err)
+        }
+        return hex.EncodeToString(b), nil
 }

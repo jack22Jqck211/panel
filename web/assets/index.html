@@ -13,6 +13,7 @@
   <div class="brand">
     <span class="dot"></span>
     <span>پنل Xray · <span id="locCount">50</span> لوکیشن Tor</span>
+    <span id="modeBadge" class="badge" style="display:none;margin-right:8px;background:rgba(46,160,67,.15);color:#7ee787;border-color:rgba(46,160,67,.4)">حالت خود‌میزبان</span>
   </div>
   <div style="display:flex;gap:10px;align-items:center">
     <span class="meta" id="revLabel"></span>
@@ -22,6 +23,12 @@
 
 <main>
   <div id="msg" class="notice"></div>
+  <div id="selfHostedInfo" class="warnbox" style="display:none;background:rgba(46,160,67,.07);border-color:rgba(46,160,67,.4);color:#7ee787">
+    ✅ <strong>حالت خود‌میزبان فعال است.</strong>
+    ترافیک پروکسی از همین سرور Railway عبور می‌کند — نیازی به VPS جداگانه نیست.
+    آدرس سرور به‌صورت خودکار از دامنه‌ی همین پنل گرفته می‌شود.
+    ۵۰ کانفیگ همه از یک آی‌پی (آی‌پی همین سرور) خارج می‌شوند.
+  </div>
   <div id="noAddr" class="warnbox" style="display:none">
     ⚠️ آدرس سرور تنظیم نشده است. تا وقتی آدرس دامنه یا آی‌پی سرورِ Xray را وارد نکنید،
     کانفیگ‌های تولیدشده آدرس درستی ندارند.
@@ -145,7 +152,11 @@
 </main>
 
 <footer class="foot">
-  <p>
+  <p id="footSelfHosted" style="display:none">
+    حالت خود‌میزبان فعال است: ترافیک از همین سرور Railway عبور می‌کند. بعد از ساخت یا
+    حذف کاربر، Xray داخلی به‌صورت خودکار reload می‌شود (حداکثر ۳ ثانیه طول می‌کشد).
+  </p>
+  <p id="footVpsMode" style="display:none">
     کانفیگ‌ها به سرورِ Xray شما اشاره می‌کنند، نه به این پنل. بعد از ساخت یا حذف کاربر،
     کانفیگ Xray سرور باید بروزرسانی شود — اگر <code class="mono">agent.sh</code> را روی سرور
     نصب کرده باشید این کار خودکار انجام می‌شود.

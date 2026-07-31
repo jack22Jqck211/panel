@@ -65,8 +65,23 @@ function renderSettings() {
   $('defaultCleanIp').value = s.defaultCleanIp || '';
   $('subIntervalHours').value = s.subIntervalHours || 12;
   $('tls').checked = !!s.tls;
-  $('noAddr').style.display = s.serverAddress ? 'none' : 'block';
-  $('selfWarn').style.display = state.selfTargeted ? 'block' : 'none';
+
+  // In self-hosted mode the panel IS the proxy server, so neither the
+  // "no address" warning nor the "self-targeted" warning apply.
+  const selfHosted = !!state.selfHosted;
+  $('modeBadge').style.display = selfHosted ? 'inline-block' : 'none';
+  $('selfHostedInfo').style.display = selfHosted ? 'block' : 'none';
+  if (selfHosted) {
+    $('noAddr').style.display = 'none';
+    $('selfWarn').style.display = 'none';
+  } else {
+    $('noAddr').style.display = s.serverAddress ? 'none' : 'block';
+    $('selfWarn').style.display = state.selfTargeted ? 'block' : 'none';
+  }
+
+  // Footer: show the mode-appropriate help text only.
+  $('footSelfHosted').style.display = selfHosted ? 'block' : 'none';
+  $('footVpsMode').style.display = selfHosted ? 'none' : 'block';
 }
 
 // ---------- server diagnostics ----------

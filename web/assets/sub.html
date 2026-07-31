@@ -57,7 +57,7 @@
     </p>
     <div class="cfg-list">
       {{range .Configs}}
-      <div class="cfg" data-uri="{{.URI}}" title="برای کپی کلیک کنید">
+      <div class="cfg" data-cfg="{{.URI}}" title="برای کپی کلیک کنید">
         <span class="flag">{{.Flag}}</span>
         <span class="who">
           <span class="cc">{{.Code}}</span>
@@ -97,7 +97,7 @@ document.addEventListener('click', async (e) => {
   }
 
   if (t.id === 'copyAll') {
-    const all = [...document.querySelectorAll('.cfg')].map((c) => c.getAttribute('data-uri')).join('\n');
+    const all = [...document.querySelectorAll('.cfg')].map((c) => c.getAttribute('data-cfg')).join('\n');
     try { await navigator.clipboard.writeText(all); flash(t, 'همه کپی شد'); }
     catch { flash(t, 'کپی نشد'); }
     return;
@@ -106,7 +106,7 @@ document.addEventListener('click', async (e) => {
   const row = t.closest('.cfg');
   if (row) {
     try {
-      await navigator.clipboard.writeText(row.getAttribute('data-uri'));
+      await navigator.clipboard.writeText(row.getAttribute('data-cfg'));
       const cc = row.querySelector('.cc');
       flash(cc, 'کپی شد');
     } catch {}

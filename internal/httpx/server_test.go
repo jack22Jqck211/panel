@@ -302,6 +302,41 @@ func TestSubscriptionFormats(t *testing.T) {
 	})
 }
 
+// Regression test for a real bug: the browser page rendered each config into a
+// data-uri attribute, and Go's html/template strips the "data-" prefix then
+// treats any attribute whose name contains "uri" or "url" as a URL context. Its
+// urlFilter only permits http, https and mailto, so every vless:// value was
+// replaced with the safety placeholder "#ZgotmplZ" -- which is what the copy
+// buttons then put on the clipboard. The attribute must stay out of URL context.
+func TestSubViewCarriesRealURIsNotTemplatePlaceholder(t *testing.T) {
+	srv := newTestServer(t)
+	c := login(t, srv)
+	u := createUser(t, srv, c, "ali", "")
+
+	rec := do(srv, http.MethodGet, "/sub/"+u["subToken"].(string)+"/view", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("view returned %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, "ZgotmplZ") {
+		t.Fatal("page contains ZgotmplZ: a config value landed in a URL template context")
+	}
+	// The copy targets must hold real, complete vless URIs.
+	if n := strings.Count(body, `data-cfg="vless://`); n != 50 {
+		t.Errorf("found %d copyable vless URIs, want 50", n)
+	}
+	if !strings.Contains(body, u["uuid"].(string)) {
+		t.Error("the page does not contain the user's UUID")
+	}
+	// Every country path must be present in a copy target.
+	for _, cc := range []string{"de", "us", "nl", "tn"} {
+		if !strings.Contains(body, "path=%2fws%2f"+cc) && !strings.Contains(body, "path=%2Fws%2F"+cc) {
+			t.Errorf("no copyable config for %s", cc)
+		}
+	}
+}
+
 // A browser hitting the bare link should get the page, a client should get base64.
 func TestSubscriptionContentNegotiation(t *testing.T) {
 	srv := newTestServer(t)
@@ -478,6 +513,116 @@ func TestSettingsRejectBadPort(t *testing.T) {
 	}, c)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("returned %d, want 400", rec.Code)
+	}
+}
+
+// ---------- self-targeting guard and diagnostics ----------
+
+func TestTargetsPanelItself(t *testing.T) {
+	cases := []struct {
+		server, panel string
+		want          bool
+	}{
+		{"panel.up.railway.app", "panel.up.railway.app", true},
+		{"PANEL.up.railway.app", "panel.up.railway.app", true}, // case-insensitive
+		{" panel.up.railway.app ", "panel.up.railway.app", true},
+		{"srv.example.com", "panel.up.railway.app", false},
+		{"", "panel.up.railway.app", false},
+		{"panel.up.railway.app", "", false},
+	}
+	for _, c := range cases {
+		if got := targetsPanelItself(c.server, c.panel); got != c.want {
+			t.Errorf("targetsPanelItself(%q, %q) = %v, want %v", c.server, c.panel, got, c.want)
+		}
+	}
+}
+
+func TestHostOfStripsPortAndFollowsForwardedHost(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Host = "example.com:8443"
+	if got := hostOf(r); got != "example.com" {
+		t.Errorf("hostOf = %q, want example.com", got)
+	}
+	r.Header.Set("X-Forwarded-Host", "public.example.org, internal")
+	if got := hostOf(r); got != "public.example.org" {
+		t.Errorf("hostOf with forwarded header = %q, want public.example.org", got)
+	}
+}
+
+// The panel must notice when it has been pointed at itself, because that config
+// can never work and produces no other visible signal.
+func TestStateFlagsSelfTargetedConfiguration(t *testing.T) {
+	srv := newTestServer(t)
+	c := login(t, srv)
+
+	readSelf := func() bool {
+		r := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+		r.Host = "panel.example.net"
+		r.AddCookie(c)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, r)
+		var out struct {
+			SelfTargeted bool   `json:"selfTargeted"`
+			PanelHost    string `json:"panelHost"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if out.PanelHost != "panel.example.net" {
+			t.Errorf("panelHost = %q", out.PanelHost)
+		}
+		return out.SelfTargeted
+	}
+
+	if readSelf() {
+		t.Error("a distinct server address should not be flagged as self-targeted")
+	}
+
+	// Point the panel at its own hostname, the mistake this guard exists for.
+	rec := do(srv, http.MethodPost, "/api/settings", map[string]interface{}{
+		"serverAddress": "panel.example.net", "serverPort": 443, "tls": true,
+		"pathPrefix": "/ws", "defaultCleanIp": "", "subIntervalHours": 12,
+		"protocol": "vless", "panelBaseUrl": "",
+	}, c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("settings returned %d", rec.Code)
+	}
+	if !readSelf() {
+		t.Error("pointing the panel at its own hostname was not flagged")
+	}
+}
+
+func TestDiagnoseReportsMissingAddress(t *testing.T) {
+	srv := newTestServer(t)
+	c := login(t, srv)
+	rec := do(srv, http.MethodPost, "/api/settings", map[string]interface{}{
+		"serverAddress": "", "serverPort": 443, "tls": true, "pathPrefix": "/ws",
+		"defaultCleanIp": "", "subIntervalHours": 12, "protocol": "vless", "panelBaseUrl": "",
+	}, c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("settings returned %d", rec.Code)
+	}
+	rec = do(srv, http.MethodGet, "/api/diagnose", nil, c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("diagnose returned %d", rec.Code)
+	}
+	var out struct {
+		Summary string `json:"summary"`
+		Message string `json:"message"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if out.Summary != "no_address" {
+		t.Errorf("summary = %q, want no_address", out.Summary)
+	}
+	if out.Message == "" {
+		t.Error("expected an explanatory message")
+	}
+}
+
+func TestDiagnoseRequiresAuth(t *testing.T) {
+	srv := newTestServer(t)
+	if rec := do(srv, http.MethodGet, "/api/diagnose", nil, nil); rec.Code != http.StatusUnauthorized {
+		t.Errorf("returned %d, want 401", rec.Code)
 	}
 }
 

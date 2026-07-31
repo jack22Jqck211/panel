@@ -17,6 +17,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/jack22Jqck211/panel/internal/generate"
 	"github.com/jack22Jqck211/panel/internal/locations"
+	"github.com/jack22Jqck211/panel/internal/probe"
 	"github.com/jack22Jqck211/panel/internal/proxyuri"
 	"github.com/jack22Jqck211/panel/internal/store"
 	"github.com/jack22Jqck211/panel/internal/sub"
@@ -109,6 +111,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/users/{id}/configs", s.requireAuth(s.handleUserConfigs))
 	s.mux.HandleFunc("GET /api/generate/xray", s.requireAuth(s.handleGenXray))
 	s.mux.HandleFunc("GET /api/generate/nginx", s.requireAuth(s.handleGenNginx))
+	s.mux.HandleFunc("GET /api/diagnose", s.requireAuth(s.handleDiagnose))
 
 	// Consumed by deploy/agent.sh on the VPS.
 	s.mux.HandleFunc("GET /api/sync", s.handleSync)
@@ -149,6 +152,30 @@ func isHTTPS(r *http.Request) bool {
 		return true
 	}
 	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+// hostOf returns the request's hostname without a port, following the reverse
+// proxy headers when present.
+func hostOf(r *http.Request) string {
+	host := r.Host
+	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
+		host = strings.Split(fwd, ",")[0]
+	}
+	host = strings.TrimSpace(host)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return host
+}
+
+// targetsPanelItself reports whether the configured proxy address points back at
+// the panel. This configuration can never work -- the panel speaks HTTP, not
+// VLESS -- and it is an easy mistake to make, so it is worth detecting rather
+// than letting every client fail silently.
+func targetsPanelItself(serverAddress, panelHost string) bool {
+	a := strings.ToLower(strings.TrimSpace(serverAddress))
+	b := strings.ToLower(strings.TrimSpace(panelHost))
+	return a != "" && b != "" && a == b
 }
 
 // baseURL resolves the panel's public origin, preferring the configured value.
@@ -300,11 +327,15 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	for _, u := range us {
 		out = append(out, userDTO{User: u, Expired: u.Expired()})
 	}
+	settings := s.st.Settings()
+	panelHost := hostOf(r)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"settings":  s.st.Settings(),
-		"users":     out,
-		"locations": locations.Count(),
-		"revision":  s.st.Revision(),
+		"settings":     settings,
+		"users":        out,
+		"locations":    locations.Count(),
+		"revision":     s.st.Revision(),
+		"panelHost":    panelHost,
+		"selfTargeted": targetsPanelItself(settings.ServerAddress, panelHost),
 	})
 }
 
@@ -473,6 +504,89 @@ func (s *Server) handleGenNginx(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="xray-panel.conf"`)
 	}
 	w.Write([]byte(conf))
+}
+
+// handleDiagnose dials the configured proxy endpoint and reports what answered.
+//
+// This exists because "no client can connect" is otherwise undiagnosable from
+// the panel: the configs look correct, the panel is healthy, and the failure is
+// entirely on the far side. Probing from here names the actual cause.
+func (s *Server) handleDiagnose(w http.ResponseWriter, r *http.Request) {
+	settings := s.st.Settings()
+	panelHost := hostOf(r)
+	selfTargeted := targetsPanelItself(settings.ServerAddress, panelHost)
+
+	out := map[string]interface{}{
+		"serverAddress": settings.ServerAddress,
+		"panelHost":     panelHost,
+		"selfTargeted":  selfTargeted,
+		"tls":           settings.TLS,
+		"port":          settings.ServerPort,
+	}
+
+	if strings.TrimSpace(settings.ServerAddress) == "" {
+		out["summary"] = "no_address"
+		out["message"] = "The server address is empty, so the generated configs point nowhere. Set it to the host running nginx, Xray and Tor-ML."
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	// The address the client actually dials, mirroring config generation.
+	dial := strings.TrimSpace(settings.ServerAddress)
+	if ip := strings.TrimSpace(settings.DefaultCleanIP); ip != "" {
+		dial = ip
+	}
+	out["dialAddress"] = dial
+	out["usingCleanIp"] = dial != settings.ServerAddress
+
+	port := settings.ServerPort
+	if port == 0 {
+		port = 443
+	}
+
+	// Probing a handful of locations is enough to tell a wiring problem from a
+	// single dead Tor node, without making the request slow.
+	all := locations.All()
+	sample := all
+	if len(sample) > 3 {
+		sample = []locations.Location{all[0], all[2], all[14]}
+	}
+
+	results := make([]probe.Result, 0, len(sample))
+	okCount := 0
+	for _, l := range sample {
+		res := probe.WebSocket(probe.Options{
+			Code:    l.Code,
+			Address: dial,
+			Port:    port,
+			SNI:     settings.ServerAddress,
+			Path:    l.Path(settings.PathPrefix),
+			TLS:     settings.TLS,
+			Timeout: 8 * time.Second,
+		})
+		if res.OK {
+			okCount++
+		}
+		results = append(results, res)
+	}
+	out["probes"] = results
+	out["reachable"] = okCount
+
+	switch {
+	case selfTargeted:
+		out["summary"] = "self_targeted"
+		out["message"] = "The server address is this panel's own hostname. The panel is a web app, not a proxy server -- it answers 404 on the WebSocket paths, which is why no client can connect. Point the server address at the VPS where nginx, Xray and Tor-ML are installed."
+	case okCount == len(sample):
+		out["summary"] = "ok"
+		out["message"] = "Every probed location completed a WebSocket upgrade. The front door and Xray are working; any remaining failure is the Tor instance for that country."
+	case okCount > 0:
+		out["summary"] = "partial"
+		out["message"] = "Some locations answered and others did not. nginx and Xray are up, but the config may be out of date -- check that the sync agent ran."
+	default:
+		out["summary"] = "unreachable"
+		out["message"] = "No probed location completed a WebSocket upgrade. See the per-location detail below for the specific cause."
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleSync serves everything the VPS agent needs in one request. The agent

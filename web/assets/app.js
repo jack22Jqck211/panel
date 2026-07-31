@@ -66,6 +66,62 @@ function renderSettings() {
   $('subIntervalHours').value = s.subIntervalHours || 12;
   $('tls').checked = !!s.tls;
   $('noAddr').style.display = s.serverAddress ? 'none' : 'block';
+  $('selfWarn').style.display = state.selfTargeted ? 'block' : 'none';
+}
+
+// ---------- server diagnostics ----------
+
+const DIAG_LABELS = {
+  websocket: ['✅', 'اتصال WebSocket برقرار شد'],
+  http_404: ['🛑', 'سرور جواب ۴۰۴ داد — این مسیر روی آن هاست وجود ندارد'],
+  http_rejected: ['⚠️', 'مسیر هست ولی upgrade رد شد'],
+  http_other: ['⚠️', 'یک وب‌سرور جواب داد ولی WebSocket نشد'],
+  tls_error: ['🛑', 'خطای TLS — گواهی با این دامنه نمی‌خوانَد'],
+  refused: ['🛑', 'اتصال رد شد — چیزی روی آن پورت گوش نمی‌دهد'],
+  timeout: ['🛑', 'تایم‌اوت — بسته‌ها به جایی نرسیدند'],
+  dns_error: ['🛑', 'دامنه resolve نمی‌شود'],
+};
+
+const SUMMARY_STYLE = {
+  ok: ['ok', '✅ سرور سالم است'],
+  partial: ['err', '⚠️ بخشی از لوکیشن‌ها جواب دادند'],
+  self_targeted: ['err', '🛑 آدرس سرور روی خودِ پنل ست شده'],
+  unreachable: ['err', '🛑 سرور در دسترس نیست'],
+  no_address: ['err', '🛑 آدرس سرور خالی است'],
+};
+
+function renderDiagnosis(d) {
+  const box = $('diagResult');
+  const [kind, title] = SUMMARY_STYLE[d.summary] || ['err', 'نتیجه'];
+  const color = kind === 'ok' ? 'var(--good)' : 'var(--bad)';
+
+  let html = `<div class="warnbox" style="border-color:${color};color:var(--text);background:rgba(255,255,255,.02)">
+    <div style="font-weight:700;margin-bottom:6px;color:${color}">${title}</div>
+    <div style="font-size:13px;line-height:1.7">${esc(d.message || '')}</div>`;
+
+  if (d.dialAddress) {
+    html += `<div class="meta" style="margin-top:10px;font-size:12px">
+      آدرس دیال‌شده: <span class="mono">${esc(d.dialAddress)}:${esc(d.port)}</span>
+      ${d.usingCleanIp ? ' (آی‌پی تمیز)' : ''} ·
+      SNI: <span class="mono">${esc(d.serverAddress)}</span>
+    </div>`;
+  }
+
+  if (d.probes && d.probes.length) {
+    html += '<div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">';
+    for (const p of d.probes) {
+      const [icon, label] = DIAG_LABELS[p.status] || ['•', p.status];
+      html += `<div style="font-size:12.5px;padding:8px 10px;background:var(--bg);border-radius:6px">
+        <div>${icon} <strong>${esc(p.code)}</strong> <span class="mono">${esc(p.path)}</span> — ${esc(label)}${p.httpCode ? ` (HTTP ${p.httpCode})` : ''}</div>
+        ${p.advice ? `<div class="meta" style="margin-top:4px;font-size:11.5px">${esc(p.advice)}</div>` : ''}
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  html += '</div>';
+  box.innerHTML = html;
+  box.style.display = 'block';
 }
 
 function renderUsers() {
@@ -204,6 +260,20 @@ document.addEventListener('click', async (e) => {
     try { await api('/api/users/' + del, { method: 'DELETE' }); flash('حذف شد.', 'ok'); await load(); }
     catch (err) { flash(err.message); }
   }
+});
+
+$('diagnose').addEventListener('click', async (e) => {
+  const btn = e.target;
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'در حال تست…';
+  try {
+    renderDiagnosis(await api('/api/diagnose'));
+  } catch (err) {
+    flash('تست ناموفق: ' + err.message);
+  }
+  btn.disabled = false;
+  btn.textContent = old;
 });
 
 $('dlXray').addEventListener('click', () => { window.location = '/api/generate/xray?download=1'; });

@@ -26,6 +26,12 @@
     ⚠️ آدرس سرور تنظیم نشده است. تا وقتی آدرس دامنه یا آی‌پی سرورِ Xray را وارد نکنید،
     کانفیگ‌های تولیدشده آدرس درستی ندارند.
   </div>
+  <div id="selfWarn" class="warnbox" style="display:none;background:rgba(218,54,51,.1);border-color:#5c2626;color:#f0a1a1">
+    🛑 <strong>آدرس سرور روی دامنه‌ی خودِ همین پنل ست شده است.</strong>
+    این حالت هیچ‌وقت کار نمی‌کند: پنل یک اپ وب است، نه سرور پروکسی — روی مسیرهای
+    WebSocket جواب ۴۰۴ می‌دهد و به همین دلیل هیچ کانفیگی وصل نمی‌شود.
+    آدرس سرور باید دامنه یا آی‌پی همان VPSی باشد که nginx و Xray و Tor-ML رویش نصب است.
+  </div>
 
   <!-- ============ settings ============ -->
   <section class="card">
@@ -70,10 +76,12 @@
       </div>
       <div class="actions">
         <button type="submit">ذخیره تنظیمات</button>
+        <button type="button" id="diagnose">🔍 تست اتصال به سرور</button>
         <button type="button" class="ghost" id="dlXray">دانلود کانفیگ Xray</button>
         <button type="button" class="ghost" id="dlNginx">دانلود کانفیگ nginx</button>
       </div>
     </form>
+    <div id="diagResult" style="display:none;margin-top:18px"></div>
   </section>
 
   <!-- ============ add user ============ -->

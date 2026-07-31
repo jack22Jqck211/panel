@@ -216,10 +216,6 @@ func (m *Manager) startOne(ctx context.Context, l locations.Location) error {
                 // Avoid forking into the background; the Go subprocess manager
                 // owns the lifecycle.
                 "RunAsDaemon 0",
-                // ClientOnly: tells Tor this is a client-only instance, not a
-                // relay. This disables ORPort/DirPort and the associated
-                // relay buffers, cutting per-instance RSS significantly.
-                "ClientOnly 1",
                 "",
         }, "\n")
         if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil {

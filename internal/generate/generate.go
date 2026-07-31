@@ -101,6 +101,13 @@ type xrayRule struct {
         Type        string   `json:"type"`
         InboundTag  []string `json:"inboundTag"`
         OutboundTag string   `json:"outboundTag"`
+        // Network filters by transport protocol ("tcp" or "udp"). Empty means
+        // "any". Used to route UDP DNS to the freedom outbound (Tor cannot
+        // carry UDP).
+        Network string `json:"network,omitempty"`
+        // Port matches on destination port. Empty means "any". Used to match
+        // DNS (port 53) so we can route it to freedom.
+        Port string `json:"port,omitempty"`
 }
 
 type xrayRouting struct {
@@ -299,6 +306,23 @@ func XraySelfHostedConfig(activeUsers []*store.User, s store.Settings) ([]byte, 
                 })
         }
         cfg.Outbounds = append(cfg.Outbounds, xrayOutbound{Tag: "block", Protocol: "blackhole"})
+
+        // Route UDP DNS (port 53) to the freedom outbound FIRST, before
+        // the per-location rules. Tor SOCKS cannot carry UDP, so if a
+        // client sends a UDP DNS query through a Tor-pinned location it
+        // would silently fail and the browser would never resolve any
+        // domain. Sending DNS to freedom means it resolves through the
+        // container's own network (fast, and since the Railway region is
+        // in Europe, geographically close to most Tor exits).
+        //
+        // This rule matches UDP traffic on port 53 from ANY inbound, and
+        // must come before the per-location rules (Xray uses first-match).
+        cfg.Routing.Rules = append(cfg.Routing.Rules, xrayRule{
+                Type:        "field",
+                Network:     "udp",
+                Port:        "53",
+                OutboundTag: "direct",
+        })
 
         // Each inbound routes to its outbound. Direct locations route to
         // "direct" (freedom); Tor locations route to "tor-<cc>".

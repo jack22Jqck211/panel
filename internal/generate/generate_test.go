@@ -71,6 +71,8 @@ type decoded struct {
                         Type        string   `json:"type"`
                         InboundTag  []string `json:"inboundTag"`
                         OutboundTag string   `json:"outboundTag"`
+                        Network     string   `json:"network,omitempty"`
+                        Port        string   `json:"port,omitempty"`
                 } `json:"rules"`
         } `json:"routing"`
 }
@@ -147,8 +149,11 @@ func TestEveryLocationIsWiredEndToEnd(t *testing.T) {
         }
         routeByInbound := map[string]string{}
         for _, r := range d.Routing.Rules {
+                // The DNS rule (network=udp, port=53) has no inbound tag --
+                // it matches all inbounds. Skip it; we only care about
+                // per-location rules here.
                 if len(r.InboundTag) != 1 {
-                        t.Fatalf("rule %v should reference exactly one inbound tag", r)
+                        continue
                 }
                 routeByInbound[r.InboundTag[0]] = r.OutboundTag
         }
@@ -505,14 +510,19 @@ func TestSelfHostedRoutesGoToMatchingOutbound(t *testing.T) {
         s := testSettings()
         d := mustGenerateSelfHosted(t, testUsers(), s)
 
-        if len(d.Routing.Rules) != locations.Count() {
-                t.Fatalf("routing rules = %d, want %d", len(d.Routing.Rules), locations.Count())
+        // One DNS rule + one per-location rule.
+        if len(d.Routing.Rules) != locations.Count()+1 {
+                t.Fatalf("routing rules = %d, want %d (1 DNS + %d per-location)",
+                        len(d.Routing.Rules), locations.Count()+1, locations.Count())
         }
 
         routeByInbound := map[string]string{}
         for _, r := range d.Routing.Rules {
+                // The DNS rule (network=udp, port=53) has no inbound tag --
+                // it matches all inbounds. Skip it; we only care about
+                // per-location rules here.
                 if len(r.InboundTag) != 1 {
-                        t.Fatalf("rule %v should reference exactly one inbound tag", r)
+                        continue
                 }
                 routeByInbound[r.InboundTag[0]] = r.OutboundTag
         }
@@ -555,6 +565,26 @@ func TestSelfHostedRoutesGoToMatchingOutbound(t *testing.T) {
                 if port != l.TorPort {
                         t.Errorf("%s: socks port = %d, want %d", l.Code, port, l.TorPort)
                 }
+        }
+}
+
+// The first routing rule must route UDP port 53 (DNS) to the freedom
+// outbound. Tor SOCKS cannot carry UDP, so without this rule browser
+// DNS queries silently fail and no website loads.
+func TestSelfHostedDNSRoutedToFreedom(t *testing.T) {
+        d := mustGenerateSelfHosted(t, testUsers(), testSettings())
+        if len(d.Routing.Rules) == 0 {
+                t.Fatal("no routing rules")
+        }
+        dnsRule := d.Routing.Rules[0]
+        if dnsRule.Network != "udp" {
+                t.Errorf("first rule network = %q, want udp", dnsRule.Network)
+        }
+        if dnsRule.Port != "53" {
+                t.Errorf("first rule port = %q, want 53", dnsRule.Port)
+        }
+        if dnsRule.OutboundTag != "direct" {
+                t.Errorf("first rule outbound = %q, want direct", dnsRule.OutboundTag)
         }
 }
 

@@ -241,12 +241,11 @@ func (m *Manager) startOne(ctx context.Context, l locations.Location) error {
                 //     Tor builds in parallel. Default is 32; 8 is plenty
                 //     for a single-user proxy.
                 "MaxClientCircuitsPending 8",
-                //   Don't run as a relay or a directory cache. This is a
-                //     client-only instance.
-                "ORPort 0",
-                "DirPort 0",
-                //   Disable the controller port -- the panel does not use it.
-                "ControlPort 0",
+                //   ClientOnly: explicitly tells Tor this is a client
+                //     instance, not a relay. This disables the ORPort,
+                //     DirPort and relay-related buffers without us having
+                //     to set them to 0 (which Tor rejects).
+                "ClientOnly 1",
                 "",
         }, "\n")
         if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil {

@@ -28,6 +28,10 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.LUTC)
+	// Go's log package defaults to stderr, which hosting platforms surface as
+	// error-level output. These are ordinary informational lines, so send them
+	// to stdout and keep the platform's log view honest.
+	log.SetOutput(os.Stdout)
 
 	if err := run(); err != nil {
 		log.Fatalf("fatal: %v", err)

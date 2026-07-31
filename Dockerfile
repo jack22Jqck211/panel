@@ -84,17 +84,20 @@ ENV PORT=8080 \
     XRAY_CONF=/tmp/xray-config.json
 
 # /data is where the panel persists its JSON state. Mount a Railway volume
-# here to keep users across redeploys.
+# here to keep users across redeploys. XRAY_CONF lives under /data so the
+# config file is writable by the panel process.
 RUN mkdir -p /data /tmp && \
-    chown -R nobody:nobody /data /tmp
+    chown -R nobody:nobody /data /tmp && \
+    chmod 1777 /tmp
 
 # Run as nobody. The panel binds a high port (8080) and Xray binds loopback
 # ports only, so root is not needed.
 USER nobody
 
-# /data is a volume: state survives container restarts only when a volume is
-# mounted here. Without one, state is ephemeral (which is fine for testing).
-VOLUME ["/data"]
+# NOTE: do not declare VOLUME here. Railway rejects Dockerfile VOLUME
+# directives ("docker VOLUME is not supported, use Railway Volumes"). To
+# persist state across redeploys, create a Railway volume in the dashboard
+# and mount it at /data.
 
 EXPOSE 8080
 

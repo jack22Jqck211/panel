@@ -60,7 +60,12 @@ FROM alpine:3.20
 # ca-certificates is required so the panel can dial HTTPS endpoints (the
 # /api/diagnose probe, the sync agent on a VPS, etc.).
 # tzdata is small and lets the panel log local times in addition to UTC.
-RUN apk add --no-cache ca-certificates tzdata
+# tor + tor-geoipdb: the panel runs one Tor instance per country (50 in
+# total), each pinned to its country via ExitNodes. tor-geoipdb provides
+# the geoip files Tor needs to map country codes to IP ranges; without it,
+# ExitNodes {cc} silently falls back to "any exit" and every location
+# would egress through the same country (the bug we are fixing).
+RUN apk add --no-cache ca-certificates tzdata tor tor-geoipdb
 
 # Xray binary from stage 2, panel binary from stage 1.
 COPY --from=xray /out/xray /usr/local/bin/xray
@@ -75,13 +80,22 @@ COPY --from=build /panel /panel
 # to use the original architecture where the panel only generates config for
 # a separate VPS.
 #
+# TOR_LOCATIONS controls which Tor instances are started. Default "all"
+# starts one Tor per country (50 instances, ~1-1.5 GB RAM). Set to a
+# comma-separated list (e.g. "DE,US,NL,FR") to start a subset on
+# RAM-constrained plans.
+#
 # PORT defaults to 8080 -- Railway injects its own PORT env at runtime, which
 # overrides this default via the envOr() helper in main.go.
 ENV PORT=8080 \
     DATA_DIR=/data \
     SELF_HOSTED_PROXY=true \
     XRAY_BIN=/usr/local/bin/xray \
-    XRAY_CONF=/tmp/xray-config.json
+    XRAY_CONF=/tmp/xray-config.json \
+    TOR_BIN=/usr/bin/tor \
+    TOR_BASE_DIR=/tmp/tor-ml \
+    TOR_GEOIP_DIR=/usr/share/tor \
+    TOR_LOCATIONS=all
 
 # /data is where the panel persists its JSON state. Mount a Railway volume
 # here to keep users across redeploys. XRAY_CONF lives under /data so the

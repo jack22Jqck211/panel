@@ -439,39 +439,85 @@ func mustGenerateSelfHosted(t *testing.T, us []*store.User, s store.Settings) de
 }
 
 // The self-hosted config keeps the 50-inbound shape so the panel's per-user
-// subscription model is unchanged, but it must not emit any socks/Tor
-// outbounds -- there is no Tor inside the container.
-func TestSelfHostedHasFiftyInboundsAndNoTor(t *testing.T) {
+// subscription model is unchanged. Each inbound routes to its own Tor SOCKS
+// outbound (one Tor instance per country, mirroring the VPS topology).
+func TestSelfHostedHasFiftyInboundsAndTorOutbounds(t *testing.T) {
         d := mustGenerateSelfHosted(t, testUsers(), testSettings())
         if len(d.Inbounds) != 50 {
                 t.Errorf("inbounds = %d, want 50", len(d.Inbounds))
         }
-        for _, out := range d.Outbounds {
-                if out.Protocol == "socks" {
-                        t.Errorf("self-hosted config must not contain a socks outbound, found %s", out.Tag)
-                }
-        }
-        // freedom + blackhole = 2 outbounds.
-        if len(d.Outbounds) != 2 {
-                t.Errorf("outbounds = %d, want 2 (freedom + blackhole)", len(d.Outbounds))
+        // 50 socks outbounds (one per location) + freedom + blackhole = 52.
+        if len(d.Outbounds) != 52 {
+                t.Errorf("outbounds = %d, want 52 (50 tor + freedom + blackhole)", len(d.Outbounds))
         }
         if d.Outbounds[0].Tag != "direct" || d.Outbounds[0].Protocol != "freedom" {
                 t.Errorf("first outbound = %s/%s, want direct/freedom",
                         d.Outbounds[0].Tag, d.Outbounds[0].Protocol)
         }
+        // Count socks outbounds: there must be exactly 50, one per location.
+        socksCount := 0
+        for _, out := range d.Outbounds {
+                if out.Protocol == "socks" {
+                        socksCount++
+                }
+        }
+        if socksCount != 50 {
+                t.Errorf("socks outbounds = %d, want 50 (one per location)", socksCount)
+        }
 }
 
-// Every routing rule in self-hosted mode must point at "direct" -- the
-// per-location rules become no-ops but are kept so adding a real Tor
-// outbound later is a one-line change rather than a re-design.
-func TestSelfHostedRoutesAllGoToDirect(t *testing.T) {
-        d := mustGenerateSelfHosted(t, testUsers(), testSettings())
+// Every routing rule in self-hosted mode must point at the matching Tor
+// outbound for that location's country, mirroring the VPS deployment's
+// topology. An off-by-one here would silently hand users the wrong exit
+// country.
+func TestSelfHostedRoutesGoToMatchingTorOutbound(t *testing.T) {
+        s := testSettings()
+        d := mustGenerateSelfHosted(t, testUsers(), s)
+
         if len(d.Routing.Rules) != 50 {
                 t.Fatalf("routing rules = %d, want 50", len(d.Routing.Rules))
         }
+
+        // Build a map of inbound tag -> outbound tag from the rules.
+        routeByInbound := map[string]string{}
         for _, r := range d.Routing.Rules {
-                if r.OutboundTag != "direct" {
-                        t.Errorf("rule %v routes to %q, want direct", r.InboundTag, r.OutboundTag)
+                if len(r.InboundTag) != 1 {
+                        t.Fatalf("rule %v should reference exactly one inbound tag", r)
+                }
+                routeByInbound[r.InboundTag[0]] = r.OutboundTag
+        }
+
+        // Build a map of outbound tag -> SOCKS port from the outbounds.
+        socksPortByTag := map[string]int{}
+        for _, out := range d.Outbounds {
+                if out.Protocol == "socks" && len(out.Settings.Servers) == 1 {
+                        socksPortByTag[out.Tag] = out.Settings.Servers[0].Port
+                }
+        }
+
+        // For every location, the inbound tag must route to that location's
+        // Tor outbound tag, and that outbound must point at that location's
+        // Tor SOCKS port.
+        for _, l := range locations.All() {
+                inTag := l.InboundTag()
+                outTag := l.OutboundTag()
+
+                got, ok := routeByInbound[inTag]
+                if !ok {
+                        t.Errorf("%s: no routing rule for inbound", l.Code)
+                        continue
+                }
+                if got != outTag {
+                        t.Errorf("%s: rule routes to %q, want %q", l.Code, got, outTag)
+                        continue
+                }
+                port, ok := socksPortByTag[outTag]
+                if !ok {
+                        t.Errorf("%s: no socks outbound tagged %s", l.Code, outTag)
+                        continue
+                }
+                if port != l.TorPort {
+                        t.Errorf("%s: socks port = %d, want %d", l.Code, port, l.TorPort)
                 }
         }
 }

@@ -171,22 +171,23 @@ func XrayConfig(activeUsers []*store.User, s store.Settings) ([]byte, error) {
         return append(out, '\n'), nil
 }
 
-// XraySelfHostedConfig renders an Xray config where every location's outbound
-// is the freedom protocol. This is the self-hosted mode: the panel container
-// itself carries proxy traffic and egresses through the host's IP, without
-// Tor.
+// XraySelfHostedConfig renders an Xray config for self-hosted mode.
 //
-// All 50 inbounds are still emitted (so the panel's "one UUID -> 50 configs"
-// contract is unchanged), but they all route to the single freedom outbound.
-// The per-location routing rules are kept too, because Xray's "first matching
-// outbound" is the direct one and we want the rules to be a no-op rather than
-// a future foot-gun if someone adds a Tor outbound later.
+// In self-hosted mode the panel container runs Xray AND Tor itself: each
+// of the 50 inbounds routes to its own Tor SOCKS outbound (one Tor
+// instance per country, pinned via ExitNodes). This is the same topology
+// the VPS deployment uses, just colocated in one container.
 //
-// Tor-ML is intentionally not bundled: 50 Tor daemons need ~1.5 GB of RAM and
-// several minutes to bootstrap, which is a poor fit for a PaaS container. The
-// multi-location exit aspect is sacrificed deliberately to make the configs
-// actually connect. If you need true per-country exits, use the VPS deployment
-// flow with deploy/install.sh instead.
+// All 50 inbounds are emitted (so the panel's "one UUID -> 50 configs"
+// contract is unchanged), and each routes to its dedicated Tor SOCKS
+// outbound on 127.0.0.1:<48180+n>. A freedom outbound is kept as the
+// first outbound so Xray's "first matching outbound" default does not
+// accidentally leak traffic if a rule is misconfigured.
+//
+// Memory note: 50 Tor instances need ~1-1.5 GB of RAM. Set TOR_LOCATIONS
+// to a subset (e.g. "DE,US,NL,FR") to start only some of them; the
+// inbounds for unstarted locations still exist but their Tor SOCKS port
+// will refuse connections.
 func XraySelfHostedConfig(activeUsers []*store.User, s store.Settings) ([]byte, error) {
         proto := proxyuri.ParseProtocol(s.Protocol)
 
@@ -204,7 +205,7 @@ func XraySelfHostedConfig(activeUsers []*store.User, s store.Settings) ([]byte, 
         cfg := xrayConfig{
                 Log:       xrayLog{LogLevel: "warning"},
                 Inbounds:  make([]xrayInbound, 0, len(locs)),
-                Outbounds: []xrayOutbound{{Tag: "direct", Protocol: "freedom"}},
+                Outbounds: make([]xrayOutbound, 0, len(locs)+2),
                 Routing:   xrayRouting{DomainStrategy: "AsIs", Rules: make([]xrayRule, 0, len(locs))},
         }
 
@@ -227,13 +228,29 @@ func XraySelfHostedConfig(activeUsers []*store.User, s store.Settings) ([]byte, 
                         },
                 })
         }
+
+        // First outbound is the Xray default. Keeping freedom first means a
+        // request that matches no rule still resolves rather than hanging.
+        cfg.Outbounds = append(cfg.Outbounds, xrayOutbound{Tag: "direct", Protocol: "freedom"})
+
+        // One socks outbound per location, pointing at that country's Tor
+        // SOCKS port. The tag matches what the routing rules reference.
+        for _, l := range locs {
+                cfg.Outbounds = append(cfg.Outbounds, xrayOutbound{
+                        Tag:      l.OutboundTag(),
+                        Protocol: "socks",
+                        Settings: xraySocksSettings{
+                                Servers: []xraySocksServer{{Address: "127.0.0.1", Port: l.TorPort}},
+                        },
+                })
+        }
         cfg.Outbounds = append(cfg.Outbounds, xrayOutbound{Tag: "block", Protocol: "blackhole"})
 
         for _, l := range locs {
                 cfg.Routing.Rules = append(cfg.Routing.Rules, xrayRule{
                         Type:        "field",
                         InboundTag:  []string{l.InboundTag()},
-                        OutboundTag: "direct",
+                        OutboundTag: l.OutboundTag(),
                 })
         }
 

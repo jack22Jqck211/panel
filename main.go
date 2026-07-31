@@ -34,6 +34,7 @@ import (
         "github.com/jack22Jqck211/panel/internal/httpx"
         "github.com/jack22Jqck211/panel/internal/locations"
         "github.com/jack22Jqck211/panel/internal/store"
+        "github.com/jack22Jqck211/panel/internal/torrun"
         "github.com/jack22Jqck211/panel/internal/xrayrun"
 )
 
@@ -103,7 +104,20 @@ func run() error {
         defer rootCancel()
 
         var xrayMgr *xrayrun.Manager
+        var torMgr *torrun.Manager
         if selfHosted {
+                // Start Tor first: Xray's config references the Tor SOCKS
+                // ports, and if Tor is not listening when Xray starts Xray
+                // will still come up (it dials lazily) but the first few
+                // requests would fail. Starting Tor first means by the time
+                // Xray is up, the SOCKS ports are already accepting.
+                torMgr, err = startTor(rootCtx)
+                if err != nil {
+                        log.Printf("warning: tor did not start: %v", err)
+                        log.Printf("         configs will connect but exit through the container's own IP (freedom).")
+                        torMgr = nil
+                }
+
                 xrayMgr, err = startSelfHostedProxy(rootCtx, st)
                 if err != nil {
                         // Do not fail the whole process: the panel is still
@@ -160,6 +174,9 @@ func run() error {
 
         select {
         case err := <-errCh:
+                if torMgr != nil {
+                        torMgr.Stop()
+                }
                 if xrayMgr != nil {
                         xrayMgr.Stop()
                 }
@@ -169,6 +186,9 @@ func run() error {
                 if xrayMgr != nil {
                         xrayMgr.Stop()
                 }
+                if torMgr != nil {
+                        torMgr.Stop()
+                }
                 ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
                 defer cancel()
                 if err := httpServer.Shutdown(ctx); err != nil {
@@ -176,6 +196,27 @@ func run() error {
                 }
                 return nil
         }
+}
+
+// startTor launches the Tor instances (one per country) and returns once
+// their SOCKS ports are listening or the bootstrap window expires.
+//
+// The selection is taken from TOR_LOCATIONS, which is either "all" (the
+// default) or a comma-separated list of country codes. Starting a subset is
+// useful when the container is RAM-constrained: 50 Tor instances need
+// roughly 1-1.5 GB.
+func startTor(ctx context.Context) (*torrun.Manager, error) {
+        binPath := envOr("TOR_BIN", "/usr/bin/tor")
+        baseDir := envOr("TOR_BASE_DIR", "/tmp/tor-ml")
+        geoipDir := envOr("TOR_GEOIP_DIR", "/usr/share/tor")
+        selection := envOr("TOR_LOCATIONS", "all")
+
+        mgr := torrun.New(binPath, baseDir, geoipDir)
+        log.Printf("tor: starting (bin=%s, base=%s, selection=%s)", binPath, baseDir, selection)
+        if err := mgr.Start(ctx, selection); err != nil {
+                return nil, fmt.Errorf("start tor: %w", err)
+        }
+        return mgr, nil
 }
 
 // startSelfHostedProxy launches the in-process Xray binary, writes the
@@ -198,7 +239,7 @@ func startSelfHostedProxy(ctx context.Context, st *store.Store) (*xrayrun.Manage
                 return nil, fmt.Errorf("start xray: %w", err)
         }
 
-        log.Printf("self-hosted proxy: xray started (%d inbounds, freedom outbound)",
+        log.Printf("self-hosted proxy: xray started (%d inbounds, tor socks outbounds)",
                 locations.Count())
         log.Printf("  bin  : %s", binPath)
         log.Printf("  conf : %s", confPath)
